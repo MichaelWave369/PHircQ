@@ -143,4 +143,36 @@ describe("ClientRuntime", () => {
       runtime.state.messages.some((message) => message.content === "nope")
     ).toBe(false);
   });
+  it("stores a verified trusted peer file through governed attachment admission", async () => {
+    const store = new MemoryStore();
+    const blobs = new MemoryBlobStore();
+    const runtime = new ClientRuntime(store, { blobStore: blobs });
+
+    runtime.trustPeer({
+      peerId: "peer-a",
+      displayName: "TestPeer",
+      fingerprint: "c".repeat(64)
+    });
+
+    const blob = new Blob(["remote bytes"], { type: "text/plain" });
+    const meta = await runtime.receivePeerFile({
+      peerId: "peer-a",
+      displayName: "TestPeer",
+      roomName: "#general",
+      name: "remote.txt",
+      mimeType: "text/plain",
+      size: blob.size,
+      sha256: "d".repeat(64),
+      transferId: "transfer-1",
+      blob
+    });
+
+    expect(runtime.state.attachments.some((item) => item.id === meta.id)).toBe(true);
+    expect(runtime.state.messages.at(-1)?.attachmentIds).toEqual([meta.id]);
+    expect(await (await runtime.getAttachmentBlob(meta.id))?.text()).toBe("remote bytes");
+    expect(
+      runtime.state.ledger.some((entry) => entry.action === "peer.file.accept")
+    ).toBe(true);
+  });
+
 });
