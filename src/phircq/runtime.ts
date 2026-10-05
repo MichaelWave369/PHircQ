@@ -23,7 +23,7 @@ function defaultSnapshot(): RuntimeSnapshot {
     displayName: "Operator",
     type: "HUMAN",
     presence: "ONLINE",
-    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE", "INVOKE_AGENT"]
+    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE", "INVOKE_AGENT", "MANAGE_AGENT"]
   };
 
   const phiBot: Actor = {
@@ -83,8 +83,10 @@ export class ClientRuntime {
     this.agentRegistry = options.agentRegistry ?? new AgentRegistry();
 
     const self = this.snapshot.actors.find((actor) => actor.id === this.snapshot.selfId);
-    if (self && !self.capabilities.includes("INVOKE_AGENT")) {
-      self.capabilities.push("INVOKE_AGENT");
+    if (self) {
+      for (const capability of ["INVOKE_AGENT", "MANAGE_AGENT"]) {
+        if (!self.capabilities.includes(capability)) self.capabilities.push(capability);
+      }
     }
 
     this.bus = new ActionBus(
@@ -246,27 +248,14 @@ export class ClientRuntime {
       enabled: true
     };
 
-    this.snapshot.agents.push(definition);
-    this.snapshot.actors.push({
-      id: actorId,
-      displayName: name,
-      type: "AGENT",
-      presence: "AGENT_IDLE",
-      capabilities: [...definition.capabilities]
+    const accepted = this.bus.dispatch({
+      actorId: this.snapshot.selfId,
+      type: "agent.create",
+      target: definition.id,
+      payload: { definition }
     });
 
-    const room = this.snapshot.rooms.find((item) => item.id === this.snapshot.currentRoomId);
-    if (room && !room.memberIds.includes(actorId)) room.memberIds.push(actorId);
-
-    this.ledger(
-      {
-        actorId: this.snapshot.selfId,
-        type: "agent.create",
-        target: definition.id
-      },
-      "ALLOW",
-      `${name} / ${model} / ollama`
-    );
+    if (!accepted) throw new Error("Agent creation denied by authority.");
 
     this.persist();
     return structuredClone(definition);
@@ -276,19 +265,14 @@ export class ClientRuntime {
     const definition = this.snapshot.agents.find((agent) => agent.id === agentId);
     if (!definition) throw new Error("Agent not found.");
 
-    definition.enabled = enabled;
-    const actor = this.snapshot.actors.find((item) => item.id === definition.actorId);
-    if (actor) actor.presence = enabled ? "AGENT_IDLE" : "OFFLINE";
+    const accepted = this.bus.dispatch({
+      actorId: this.snapshot.selfId,
+      type: "agent.configure",
+      target: agentId,
+      payload: { enabled }
+    });
 
-    this.ledger(
-      {
-        actorId: this.snapshot.selfId,
-        type: "agent.configure",
-        target: agentId
-      },
-      "ALLOW",
-      enabled ? "enabled" : "disabled"
-    );
+    if (!accepted) throw new Error("Agent configuration denied by authority.");
     this.persist();
   }
 
@@ -436,6 +420,56 @@ export class ClientRuntime {
         action,
         "ALLOW",
         `${meta.name} ${meta.size} bytes sha256:${meta.sha256}`
+      );
+      return;
+    }
+
+    if (action.type === "agent.create") {
+      const { definition } = action.payload as { definition: AgentDefinition };
+
+      if (!this.snapshot.agents.some((agent) => agent.id === definition.id)) {
+        this.snapshot.agents.push(definition);
+        this.snapshot.actors.push({
+          id: definition.actorId,
+          displayName: definition.name,
+          type: "AGENT",
+          presence: "AGENT_IDLE",
+          capabilities: [...definition.capabilities]
+        });
+
+        const room = this.snapshot.rooms.find(
+          (item) => item.id === this.snapshot.currentRoomId
+        );
+        if (room && !room.memberIds.includes(definition.actorId)) {
+          room.memberIds.push(definition.actorId);
+        }
+      }
+
+      this.ledger(
+        action,
+        "ALLOW",
+        `${definition.name} / ${definition.model} / ${definition.provider}`
+      );
+      return;
+    }
+
+    if (action.type === "agent.configure") {
+      const definition = this.snapshot.agents.find(
+        (agent) => agent.id === action.target
+      );
+      if (definition) {
+        const { enabled } = action.payload as { enabled: boolean };
+        definition.enabled = enabled;
+        const actor = this.snapshot.actors.find(
+          (item) => item.id === definition.actorId
+        );
+        if (actor) actor.presence = enabled ? "AGENT_IDLE" : "OFFLINE";
+      }
+
+      this.ledger(
+        action,
+        "ALLOW",
+        (action.payload as { enabled: boolean }).enabled ? "enabled" : "disabled"
       );
       return;
     }
