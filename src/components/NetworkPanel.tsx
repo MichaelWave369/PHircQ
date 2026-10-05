@@ -5,7 +5,7 @@ import {
   encodePaperSignal,
   type PaperPeerDescriptor
 } from "../phircq/paperLink";
-import type { PeerSession } from "../phircq/peerSession";
+import type { IncomingFileOffer, PeerSession } from "../phircq/peerSession";
 import type { ClientRuntime } from "../phircq/runtime";
 import type { RuntimeSnapshot } from "../phircq/types";
 import { runBrowserWebRtcAcceptance } from "../phircq/webrtcAcceptance";
@@ -38,6 +38,7 @@ export function NetworkPanel({
   const peerIdRef = useRef(`web-${crypto.randomUUID()}`);
   const endpointRef = useRef<PaperLinkEndpoint | null>(null);
   const sessionRef = useRef<PeerSession | null>(null);
+  const peerFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [networkBusy, setNetworkBusy] = useState(false);
   const [networkSteps, setNetworkSteps] = useState<string[]>([]);
@@ -47,6 +48,10 @@ export function NetworkPanel({
   const [remotePeer, setRemotePeer] =
     useState<PaperPeerDescriptor | null>(null);
   const [remoteMessage, setRemoteMessage] = useState("");
+  const [incomingFileOffer, setIncomingFileOffer] =
+    useState<IncomingFileOffer | null>(null);
+  const [fileTransferStatus, setFileTransferStatus] = useState("");
+  const [fileTransferProgress, setFileTransferProgress] = useState(0);
 
   const remoteTrusted = remotePeer
     ? snapshot.peers.some(
@@ -233,6 +238,51 @@ export function NetworkPanel({
             runtime.receivePeerChat(message);
             onRuntimeChange();
           },
+          onFileOffer(offer) {
+            setIncomingFileOffer(offer);
+            setFileTransferStatus(
+              `Incoming ${offer.offer.name} · ${offer.offer.size.toLocaleString()} bytes`
+            );
+            setFileTransferProgress(0);
+            onNotice(
+              `${offer.offer.displayName} offered ${offer.offer.name}. Accept or reject it explicitly.`
+            );
+          },
+          onFileProgress(progress) {
+            const percent =
+              progress.totalBytes === 0
+                ? 100
+                : Math.min(
+                    100,
+                    Math.round(
+                      (progress.completedBytes / progress.totalBytes) * 100
+                    )
+                  );
+            setFileTransferProgress(percent);
+            setFileTransferStatus(
+              `${progress.direction === "send" ? "Sending" : "Receiving"} · ${percent}%`
+            );
+          },
+          async onFileReceived(file) {
+            await runtime.receivePeerFile(file);
+            setIncomingFileOffer(null);
+            setFileTransferProgress(100);
+            setFileTransferStatus(
+              `Received ${file.name} · SHA-256 verified`
+            );
+            onRuntimeChange();
+            onNotice(
+              `Received ${file.name} from ${file.displayName}; SHA-256 verified before admission.`
+            );
+          },
+          onFileStatus(status) {
+            if (status.status === "sent") {
+              setFileTransferProgress(100);
+            }
+            setFileTransferStatus(
+              `${status.status.toUpperCase()}${status.detail ? ` · ${status.detail}` : ""}`
+            );
+          },
           onUntrustedPeer(request) {
             onNotice(
               `Signed frame from untrusted peer ${request.displayName} (${request.fingerprint.slice(0, 16)}…).`
@@ -288,6 +338,80 @@ export function NetworkPanel({
     }
   }
 
+  async function sendPeerFile(file: File | undefined) {
+    if (!file) return;
+
+    const session = sessionRef.current;
+    if (!session || linkState !== "CONNECTED") {
+      onNotice("Connect a trusted Paper Link before sending a file.");
+      if (peerFileInputRef.current) peerFileInputRef.current.value = "";
+      return;
+    }
+
+    setFileTransferProgress(0);
+    setFileTransferStatus(`Hashing ${file.name}…`);
+
+    try {
+      const offer = await session.offerFile({
+        file,
+        name: file.name,
+        mimeType: file.type,
+        roomName: currentRoomName,
+        displayName: localDisplayName
+      });
+      setFileTransferStatus(
+        `OFFERED · ${offer.name} · waiting for remote acceptance`
+      );
+      onNotice(
+        `File offer sent for ${offer.name}. Bytes will not move until the remote operator accepts.`
+      );
+    } catch (error) {
+      setFileTransferStatus("FAILED");
+      onNotice(
+        error instanceof Error ? error.message : "Unable to offer peer file."
+      );
+    } finally {
+      if (peerFileInputRef.current) peerFileInputRef.current.value = "";
+    }
+  }
+
+  async function acceptIncomingFile() {
+    const session = sessionRef.current;
+    if (!session || !incomingFileOffer) return;
+
+    try {
+      await session.acceptFile(incomingFileOffer.offer.transferId);
+      setFileTransferStatus(
+        `ACCEPTED · receiving ${incomingFileOffer.offer.name}`
+      );
+      onNotice(
+        `Accepted ${incomingFileOffer.offer.name}. PHircQ will verify size and SHA-256 before storing it.`
+      );
+    } catch (error) {
+      onNotice(
+        error instanceof Error ? error.message : "Unable to accept peer file."
+      );
+    }
+  }
+
+  async function rejectIncomingFile() {
+    const session = sessionRef.current;
+    if (!session || !incomingFileOffer) return;
+
+    try {
+      await session.rejectFile(incomingFileOffer.offer.transferId);
+      setFileTransferStatus(
+        `REJECTED · ${incomingFileOffer.offer.name}`
+      );
+      setIncomingFileOffer(null);
+      setFileTransferProgress(0);
+    } catch (error) {
+      onNotice(
+        error instanceof Error ? error.message : "Unable to reject peer file."
+      );
+    }
+  }
+
   async function disconnect() {
     const endpoint = endpointRef.current;
 
@@ -319,6 +443,9 @@ export function NetworkPanel({
     setLocalSignal("");
     if (clearRemote) setRemoteSignal("");
     setRemotePeer(null);
+    setIncomingFileOffer(null);
+    setFileTransferStatus("");
+    setFileTransferProgress(0);
     setLinkState("IDLE");
   }
 
@@ -501,6 +628,51 @@ export function NetworkPanel({
       >
         Send to linked peer
       </button>
+
+      <div className="pane-title">DIRECT PEER FILES</div>
+      <p className="muted">
+        File bytes move only after the receiving operator accepts the signed
+        offer. Transfers are chunked, backpressure-aware and SHA-256 verified
+        before local storage admission.
+      </p>
+
+      <input
+        ref={peerFileInputRef}
+        type="file"
+        disabled={linkState !== "CONNECTED"}
+        onChange={(event) =>
+          void sendPeerFile(event.target.files?.[0])
+        }
+      />
+
+      {fileTransferStatus && (
+        <div className="file-transfer-status">
+          <strong>{fileTransferStatus}</strong>
+          <progress max={100} value={fileTransferProgress} />
+          <span>{fileTransferProgress}%</span>
+        </div>
+      )}
+
+      {incomingFileOffer && (
+        <div className="incoming-file-offer">
+          <strong>{incomingFileOffer.offer.name}</strong>
+          <span>
+            {incomingFileOffer.offer.size.toLocaleString()} bytes ·{" "}
+            {incomingFileOffer.offer.mimeType}
+          </span>
+          <code>
+            sha256:{incomingFileOffer.offer.sha256}
+          </code>
+          <div className="paper-actions">
+            <button onClick={() => void acceptIncomingFile()}>
+              Accept file
+            </button>
+            <button onClick={() => void rejectIncomingFile()}>
+              Reject file
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="pane-title">TRUSTED PEERS</div>
 
