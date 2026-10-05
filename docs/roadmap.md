@@ -20,72 +20,65 @@
 ## Rung 3 — Agents
 - [x] AgentAdapter interface
 - [x] Ollama discovery
-- [x] configurable local endpoint
 - [x] persisted agent definitions
-- [x] MANAGE_AGENT and INVOKE_AGENT authority
-- [x] agent room participation through message.send
-- [x] enable / disable controls
-- [x] recent-room context
-- [ ] autonomous triggers and subscriptions
-- [ ] non-Ollama provider adapters
+- [x] MANAGE_AGENT / INVOKE_AGENT authority
+- [x] governed agent room participation
 
 ## Rung 4 — Transport core
 - [x] formal Transport contract
-- [x] paired two-runtime acceptance harness
 - [x] WebRTC RTCDataChannel transport
-- [x] explicit persisted peer trust
-- [x] ECDSA P-256 signed frames
-- [x] public-key fingerprints
-- [x] replay / duplicate rejection
-- [x] governed remote message admission
-- [x] real browser WebRTC strict-local self-test
+- [x] signed frames
+- [x] explicit peer trust
+- [x] replay rejection
+- [x] governed REMOTE_PEER message admission
 
-## Rung 5 — Paper Link peer UX
-- [x] user-facing manual offer / answer workflow
-- [x] no signaling server required
-- [x] operator fingerprint comparison
-- [x] explicit trust before peer chat
-- [x] two-browser / two-machine room chat path
-- [x] disconnect and manual re-link
+## Rung 5 — Paper Link
+- [x] manual offer / answer workflow
+- [x] fingerprint comparison
+- [x] explicit trust before chat
+- [x] two-client room chat
+- [x] disconnect / re-link
 - [x] trust removal
-- [ ] automatic reconnect
-- [ ] optional rendezvous service
 
 ## Rung 6 — Native + LAN
-- [x] Tauri v2 desktop shell scaffold
-- [x] native bridge with web-safe fallback
-- [x] mDNS/DNS-SD service advertisement
-- [x] mDNS/DNS-SD peer browsing
-- [x] real native reachability probe endpoint
-- [x] resolved peer snapshot in UI
-- [x] discovery remains untrusted by default
-- [x] native Rust CI check + unit tests
-- [ ] automatic discovery → signed link handoff
-- [ ] native persistent peer identity
+- [x] Tauri v2 shell
+- [x] native bridge
+- [x] mDNS advertisement and browsing
+- [x] native reachability probe
+- [x] native Rust CI
 
 ## Rung 7 — Direct peer files
 - [x] signed file offer
-- [x] explicit remote accept / reject
-- [x] 25 MiB receive bound
-- [x] 12 KiB signed chunking
-- [x] RTCDataChannel bufferedAmount backpressure
+- [x] explicit accept / reject
+- [x] bounded chunking
+- [x] RTCDataChannel backpressure
 - [x] declared-size validation
-- [x] final SHA-256 verification before admission
-- [x] success / failure receipt
-- [x] governed REMOTE_PEER file.attach admission
-- [x] bounded local blob storage
-- [x] transfer progress UI
-- [ ] incremental hash-state persistence
-- [ ] resumable transfer offsets
-- [ ] reconnect/resume lifecycle
+- [x] final SHA-256 verification
+- [x] governed file admission
+- [x] sender receipt
 
-## Rung 8 — Native link handoff
-- [ ] discovery → signed link bootstrap
-- [ ] native persistent peer identity
-- [ ] optional reconnect policy
-- [ ] optional rendezvous service with explicit privacy mode
+## Rung 8 — Persistent identity + LAN handoff
+- [x] persistent P-256 identity across normal reloads
+- [x] stable peer id and fingerprint
+- [x] mDNS advertises the persistent peer id
+- [x] native versioned LAN link envelope
+- [x] verified endpoint offer delivery
+- [x] verified endpoint answer delivery
+- [x] discovery → Paper Link negotiation handoff
+- [x] explicit fingerprint trust retained
+- [x] manual Paper Link remains fallback
+- [ ] OS-backed native private-key vault
+- [ ] automatic reconnect policy
+
+## Rung 9 — Resumable data plane
+- [ ] persistent transfer manifest
+- [ ] chunk acknowledgement bitmap
+- [ ] resume offsets after reconnect
+- [ ] incremental hash-state persistence
+- [ ] transfer cancellation and expiry
 
 ## Later
+- [ ] optional Internet rendezvous mode
 - [ ] voice/video/screen share
 - [ ] conference rooms
 - [ ] synchronized media rooms
