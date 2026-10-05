@@ -29,21 +29,31 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes;
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", toArrayBuffer(bytes));
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
 
-function canonicalFrameBody(frame: Pick<SignedFrame, "id" | "peerId" | "sentAt" | "payload">): Uint8Array {
-  return new TextEncoder().encode(
-    JSON.stringify({
-      id: frame.id,
-      peerId: frame.peerId,
-      sentAt: frame.sentAt,
-      payload: frame.payload
-    })
+function canonicalFrameBody(
+  frame: Pick<SignedFrame, "id" | "peerId" | "sentAt" | "payload">
+): ArrayBuffer {
+  return toArrayBuffer(
+    new TextEncoder().encode(
+      JSON.stringify({
+        id: frame.id,
+        peerId: frame.peerId,
+        sentAt: frame.sentAt,
+        payload: frame.payload
+      })
+    )
   );
 }
 
@@ -110,7 +120,7 @@ export async function verifyFrame<T>(frame: SignedFrame<T>): Promise<boolean> {
     return crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       publicKey,
-      base64ToBytes(frame.signature),
+      toArrayBuffer(base64ToBytes(frame.signature)),
       canonicalFrameBody(frame)
     );
   } catch {
