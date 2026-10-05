@@ -9,82 +9,87 @@ media and governed automation.
 Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger → Transport
 ```
 
-## v0.6 native LAN rung
+## v0.7 direct peer files
+
+PHircQ can now move file bytes across an already trusted Paper Link session.
 
 ### Working
 
-- local identity, rooms, text chat and IRC-style commands
-- capability-gated Action Bus and inspectable ledger
+- local rooms, text chat and IRC-style commands
+- capability-gated Action Bus and activity ledger
 - packaged SQLite persistence
-- governed local attachments with SHA-256 receipts
-- provider-neutral AgentAdapter and local Ollama agents
-- WebRTC RTCDataChannel transport
-- ECDSA P-256 signed peer frames
-- explicit peer fingerprint trust
-- Paper Link manual two-client WebRTC workflow
-- **Tauri v2 desktop shell scaffold**
-- **native mDNS/DNS-SD discovery**
-- native PHircQ service advertisement as `_phircq._tcp.local.`
-- real local TCP reachability probe for discovered PHircQ nodes
-- browser build remains honest and does not fake native LAN discovery
-- native discovery does not auto-trust or auto-admit peers
+- local governed attachments with SHA-256 receipts
+- local Ollama agents through a provider-neutral AgentAdapter
+- signed WebRTC peer chat
+- ECDSA P-256 peer identities and SHA-256 fingerprints
+- replay rejection and explicit persisted trust
+- Paper Link manual two-client negotiation
+- Tauri v2 desktop shell
+- native mDNS/DNS-SD discovery and real reachability probes
+- **direct signed peer file offers**
+- **explicit remote accept / reject before bytes move**
+- **12 KiB chunked transfer**
+- **RTCDataChannel backpressure drain**
+- **declared-size enforcement**
+- **final SHA-256 verification before storage admission**
+- **receiver receipt back to sender**
+- governed REMOTE_PEER file admission through `SEND_FILE`
+
+### Peer file flow
+
+```text
+trusted connected peer
+  ↓
+signed file.offer
+  ↓
+operator Accept / Reject
+  ↓ accepted only
+chunked signed file.chunk frames
+  ↓
+RTCDataChannel backpressure
+  ↓
+declared-size validation
+  ↓
+SHA-256 re-computation
+  ↓
+bounded BlobStore
+  ↓
+REMOTE_PEER → file.attach → Authority
+  ↓
+room attachment + ledger
+  ↓
+signed success/failure receipt
+```
+
+A sender cannot start moving file chunks until the receiver explicitly accepts
+the offer. A successfully transported blob is not admitted to PHircQ storage
+until its byte count and SHA-256 match the signed offer.
+
+### Limits
+
+Current direct peer file limit is **25 MiB per file**. The transfer uses 12 KiB
+chunks so signed JSON frames stay comfortably below common RTCDataChannel
+message-size trouble zones.
+
+The v0.7 transfer verifies SHA-256 after bounded reassembly. True incremental
+hash-state persistence and transfer resume are still future work, rather than
+being advertised because a progress bar looked convincing. Humanity has tried
+that product-management technique enough times.
 
 ### Native desktop
-
-Install Rust and the platform prerequisites for Tauri, then:
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-The regular web build still works with:
+Web mode remains available:
 
 ```bash
 npm run dev
 ```
 
-The desktop shell exposes native commands only when PHircQ is running inside
-Tauri. In an ordinary browser the LAN panel explicitly reports that native
-discovery is unavailable.
-
-### LAN discovery contract
-
-The native app publishes and browses:
-
-```text
-_phircq._tcp.local.
-```
-
-Discovery TXT metadata includes:
-
-```text
-peer_id
-display_name
-version
-paper_link=1
-trust=explicit
-```
-
-Each desktop node also opens a small ephemeral TCP probe endpoint and advertises
-that actual port through DNS-SD. The UI can probe a discovered node and verify a
-versioned PHircQ hello before calling it reachable.
-
-**Discovery is not trust.** A discovered device does not automatically become a
-REMOTE_PEER actor and does not bypass the fingerprint trust path.
-
-### Still planned
-
-- automatic LAN handoff from discovery into signed peer linking
-- direct peer file transfer
-- native persistent identity/key storage
-- optional rendezvous / Internet traversal mode
-- voice/video/screen share
-- synchronized media
-- installers/signing/release packaging
-- plugins and federation
-
-## Verify
+### Verify
 
 ```bash
 npm test

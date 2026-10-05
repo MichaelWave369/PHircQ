@@ -484,6 +484,103 @@ export class ClientRuntime {
     return accepted;
   }
 
+  async receivePeerFile(input: {
+    peerId: string;
+    displayName: string;
+    roomName: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    transferId: string;
+    blob: Blob;
+  }): Promise<AttachmentMeta> {
+    if (!this.blobStore) {
+      throw new Error("Blob storage is unavailable.");
+    }
+
+    const trust = this.snapshot.peers.find(
+      (peer) => peer.peerId === input.peerId
+    );
+    if (!trust) {
+      throw new Error("Peer file rejected because peer is not trusted.");
+    }
+
+    const room = this.snapshot.rooms.find(
+      (candidate) =>
+        candidate.name.toLowerCase() === input.roomName.toLowerCase() &&
+        !candidate.archived
+    );
+    if (!room) {
+      throw new Error(`Peer file targets unknown room ${input.roomName}.`);
+    }
+
+    if (input.blob.size !== input.size) {
+      throw new Error("Peer file size does not match verified metadata.");
+    }
+
+    const actorId = `peer_${input.peerId}`;
+    let actor = this.snapshot.actors.find((item) => item.id === actorId);
+
+    if (!actor) {
+      actor = {
+        id: actorId,
+        displayName: trust.displayName || input.displayName,
+        type: "REMOTE_PEER",
+        presence: "ONLINE",
+        capabilities: ["SEND_MESSAGE", "SEND_FILE"]
+      };
+      this.snapshot.actors.push(actor);
+    } else {
+      actor.displayName = trust.displayName || input.displayName;
+      actor.presence = "ONLINE";
+      for (const capability of ["SEND_MESSAGE", "SEND_FILE"]) {
+        if (!actor.capabilities.includes(capability)) {
+          actor.capabilities.push(capability);
+        }
+      }
+    }
+
+    if (!room.memberIds.includes(actorId)) room.memberIds.push(actorId);
+
+    const meta: AttachmentMeta = {
+      id: uid("attachment_peer"),
+      actorId,
+      name: input.name,
+      mimeType: input.mimeType || "application/octet-stream",
+      size: input.size,
+      sha256: input.sha256,
+      createdAt: new Date().toISOString()
+    };
+
+    await this.blobStore.put(meta.id, input.blob);
+
+    const accepted = this.bus.dispatch({
+      actorId,
+      type: "file.attach",
+      target: room.id,
+      payload: { meta }
+    });
+
+    if (!accepted) {
+      await this.blobStore.delete(meta.id);
+      throw new Error("Peer file admission was denied by authority.");
+    }
+
+    this.ledger(
+      {
+        actorId: this.snapshot.selfId,
+        type: "peer.file.accept",
+        target: input.peerId
+      },
+      "ALLOW",
+      `${input.transferId} · ${input.name} · sha256:${input.sha256}`
+    );
+
+    this.persist();
+    return structuredClone(meta);
+  }
+
   selectRoom(roomId: string): void {
     if (
       this.snapshot.rooms.some(
