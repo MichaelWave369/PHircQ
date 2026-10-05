@@ -1,34 +1,90 @@
-import { FormEvent, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useRef,
+  useState
+} from "react";
+import { BrowserBlobStore } from "./phircq/attachments";
 import { ClientRuntime } from "./phircq/runtime";
+import { SqliteSnapshotStore } from "./phircq/sqliteStore";
 import { LocalStorageStore } from "./phircq/store";
 
 type SideTab = "people" | "ledger";
+type PersistenceMode = "BOOTING" | "SQLITE" | "FALLBACK";
 
 export default function App() {
-  const runtimeRef = useRef<ClientRuntime | null>(null);
-  if (!runtimeRef.current) {
-    runtimeRef.current = new ClientRuntime(new LocalStorageStore());
-  }
-  const runtime = runtimeRef.current;
-
+  const [runtime, setRuntime] = useState<ClientRuntime | null>(null);
+  const [persistence, setPersistence] = useState<PersistenceMode>("BOOTING");
   const [, setVersion] = useState(0);
   const [input, setInput] = useState("");
   const [roomDraft, setRoomDraft] = useState("");
   const [sideTab, setSideTab] = useState<SideTab>("people");
-  const refresh = () => setVersion((value) => value + 1);
+  const [notice, setNotice] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      try {
+        const store = await SqliteSnapshotStore.create();
+        if (!active) return;
+
+        setRuntime(
+          new ClientRuntime(store, {
+            blobStore: new BrowserBlobStore()
+          })
+        );
+        setPersistence("SQLITE");
+      } catch (error) {
+        if (!active) return;
+
+        setRuntime(
+          new ClientRuntime(new LocalStorageStore(), {
+            blobStore: new BrowserBlobStore()
+          })
+        );
+        setPersistence("FALLBACK");
+        setNotice(
+          error instanceof Error
+            ? `SQLite unavailable: ${error.message}`
+            : "SQLite unavailable; using legacy local persistence."
+        );
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (!runtime) {
+    return (
+      <main className="boot-screen">
+        <strong>Φ PHircQ</strong>
+        <span>opening local store…</span>
+      </main>
+    );
+  }
+
+  const refresh = () => setVersion((value) => value + 1);
   const state = runtime.state;
   const currentRoom =
-    state.rooms.find((room) => room.id === state.currentRoomId) ?? state.rooms[0];
+    state.rooms.find((room) => room.id === state.currentRoomId) ??
+    state.rooms[0];
   const messages = state.messages.filter(
     (message) => message.roomId === currentRoom?.id
   );
   const actorById = new Map(state.actors.map((actor) => [actor.id, actor]));
+  const attachmentById = new Map(
+    state.attachments.map((attachment) => [attachment.id, attachment])
+  );
   const self = actorById.get(state.selfId)!;
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!input.trim()) return;
+
     runtime.submit(input);
     setInput("");
     refresh();
@@ -39,6 +95,44 @@ export default function App() {
     runtime.createRoom(roomDraft);
     setRoomDraft("");
     refresh();
+  }
+
+  async function attach(file: File | undefined) {
+    if (!file) return;
+
+    setNotice(`hashing ${file.name}…`);
+
+    try {
+      const meta = await runtime.attachFile(file);
+      setNotice(
+        `stored ${meta.name} · sha256 ${meta.sha256.slice(0, 12)}…`
+      );
+      refresh();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Unable to attach file."
+      );
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function downloadAttachment(attachmentId: string) {
+    const meta = attachmentById.get(attachmentId);
+    if (!meta) return;
+
+    const blob = await runtime.getAttachmentBlob(attachmentId);
+    if (!blob) {
+      setNotice("Attachment bytes are unavailable on this node.");
+      return;
+    }
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = meta.name;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   return (
@@ -63,13 +157,16 @@ export default function App() {
       <section className="workspace">
         <aside className="rooms pane">
           <div className="pane-title">ROOMS</div>
+
           {state.rooms
             .filter((room) => !room.archived)
             .map((room) => (
               <button
                 key={room.id}
                 className={
-                  room.id === currentRoom?.id ? "room active-room" : "room"
+                  room.id === currentRoom?.id
+                    ? "room active-room"
+                    : "room"
                 }
                 onClick={() => {
                   runtime.selectRoom(room.id);
@@ -115,15 +212,39 @@ export default function App() {
                       minute: "2-digit"
                     })}
                   </time>
-                  {message.format === "action" ? (
-                    <span>
-                      <b>* {nick}</b> {message.content}
-                    </span>
-                  ) : (
-                    <span>
-                      <b>&lt;{nick}&gt;</b> {message.content}
-                    </span>
-                  )}
+
+                  <div>
+                    {message.format === "action" ? (
+                      <span>
+                        <b>* {nick}</b> {message.content}
+                      </span>
+                    ) : (
+                      <span>
+                        <b>&lt;{nick}&gt;</b> {message.content}
+                      </span>
+                    )}
+
+                    {message.attachmentIds.map((attachmentId) => {
+                      const attachment = attachmentById.get(attachmentId);
+                      if (!attachment) return null;
+
+                      return (
+                        <button
+                          className="file-card"
+                          key={attachment.id}
+                          onClick={() =>
+                            void downloadAttachment(attachment.id)
+                          }
+                        >
+                          <strong>{attachment.name}</strong>
+                          <span>{attachment.size.toLocaleString()} bytes</span>
+                          <code>
+                            sha256:{attachment.sha256.slice(0, 16)}…
+                          </code>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </article>
               );
             })}
@@ -137,8 +258,26 @@ export default function App() {
               onChange={(event) => setInput(event.target.value)}
               placeholder="type message or /help"
             />
-            <button>Send</button>
+
+            <input
+              ref={fileInputRef}
+              className="file-input"
+              type="file"
+              onChange={(event) =>
+                void attach(event.target.files?.[0])
+              }
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              File
+            </button>
+            <button type="submit">Send</button>
           </form>
+
+          {notice && <div className="notice">{notice}</div>}
         </section>
 
         <aside className="people pane">
@@ -166,7 +305,9 @@ export default function App() {
                     {actor.presence === "OFFLINE" ? "○" : "■"}
                   </span>
                   <span>{actor.displayName}</span>
-                  {actor.type !== "HUMAN" && <small>[{actor.type}]</small>}
+                  {actor.type !== "HUMAN" && (
+                    <small>[{actor.type}]</small>
+                  )}
                 </div>
               ))}
             </div>
@@ -188,10 +329,13 @@ export default function App() {
 
       <footer className="footer">
         <span>LOCAL</span>
+        <span>db {persistence}</span>
         <span>peers 0</span>
         <span>
-          agents {state.actors.filter((actor) => actor.type === "AGENT").length}
+          agents{" "}
+          {state.actors.filter((actor) => actor.type === "AGENT").length}
         </span>
+        <span>files {state.attachments.length}</span>
         <span>voice PLANNED</span>
         <span>plaintext</span>
         <span className="grow" />
