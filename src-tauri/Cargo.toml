@@ -1,0 +1,20 @@
+[package]
+name = "phircq"
+version = "0.6.0"
+description = "PHircQ native local-first communications shell"
+authors = ["MichaelWave369"]
+edition = "2021"
+
+[lib]
+name = "phircq_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+mdns-sd = "0.21.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+uuid = { version = "1", features = ["v4"] }
