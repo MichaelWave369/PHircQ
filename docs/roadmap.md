@@ -62,15 +62,28 @@
 - [x] native Rust CI check + unit tests
 - [ ] automatic discovery → signed link handoff
 - [ ] native persistent peer identity
-- [ ] direct peer files
 
-## Rung 7 — Native peer data
-- [ ] direct file offer/accept
-- [ ] chunked transfer with backpressure
-- [ ] incremental SHA-256 verification
-- [ ] resumable transfer
-- [ ] bounded receive storage
-- [ ] reconnect lifecycle
+## Rung 7 — Direct peer files
+- [x] signed file offer
+- [x] explicit remote accept / reject
+- [x] 25 MiB receive bound
+- [x] 12 KiB signed chunking
+- [x] RTCDataChannel bufferedAmount backpressure
+- [x] declared-size validation
+- [x] final SHA-256 verification before admission
+- [x] success / failure receipt
+- [x] governed REMOTE_PEER file.attach admission
+- [x] bounded local blob storage
+- [x] transfer progress UI
+- [ ] incremental hash-state persistence
+- [ ] resumable transfer offsets
+- [ ] reconnect/resume lifecycle
+
+## Rung 8 — Native link handoff
+- [ ] discovery → signed link bootstrap
+- [ ] native persistent peer identity
+- [ ] optional reconnect policy
+- [ ] optional rendezvous service with explicit privacy mode
 
 ## Later
 - [ ] voice/video/screen share

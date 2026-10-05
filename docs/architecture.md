@@ -20,29 +20,24 @@ Ledger
 Transport
 ```
 
-## Principles
+## Core rules
 
 - Humans, agents, bots, services and remote peers use one Actor model.
 - Meaningful operations pass through the Action Bus.
 - Authority is explicit and inspectable.
 - Local operation does not require an account or cloud backend.
-- Transport is a boundary, not UI state.
-- Feature status must distinguish WORKING, EXPERIMENTAL and PLANNED.
-- Remote peers, agents, scripts and files are untrusted until authorized.
+- Transport never grants authority.
+- Discovery never grants trust.
+- Feature status distinguishes WORKING from future work.
 
-## Browser persistence boundary
+## Persistence boundary
 
-The web shell uses packaged `sql.js` for SQLite semantics. The SQLite database
-is serialized into browser-local storage, while attachment bytes are kept
-separately in IndexedDB.
-
-A later native persistence rung can replace these backing stores without
-changing the runtime contract.
+The browser shell uses packaged `sql.js` for SQLite semantics. Attachment bytes
+live in a bounded IndexedDB BlobStore while metadata and ledger state live in
+SQLite. The native shell can later replace those backing stores without changing
+the runtime contract.
 
 ## Agent boundary
-
-Agents are ordinary PHircQ Actors plus a persisted AgentDefinition. Providers
-implement the AgentAdapter contract.
 
 ```text
 Operator
@@ -60,7 +55,7 @@ Action Bus
 Room + Ledger
 ```
 
-## Peer boundary
+## Peer trust boundary
 
 ```text
 Transport
@@ -69,75 +64,87 @@ SignedFrame verification
   ↓
 ReplayWindow
   ↓
-persisted peer fingerprint trust
+persisted fingerprint trust
   ↓
 REMOTE_PEER Actor
-  ↓ SEND_MESSAGE
+  ↓
 Action Bus
   ↓
-Authority
-  ↓
-Room
+Room / File service
   ↓
 Ledger
 ```
 
-Discovery never sits inside that trust chain. Finding a device on the LAN does
-not make it trusted.
+Peer frames use ECDSA P-256 signatures. Public keys are fingerprinted with
+SHA-256. A cryptographically valid frame from an unknown key is still untrusted.
 
-## Native shell boundary
+## Native LAN boundary
 
-The Tauri shell adds native capabilities behind an explicit bridge:
+The Tauri app advertises and browses `_phircq._tcp.local.`. A native reachability
+probe proves that a resolved endpoint is actually speaking the versioned PHircQ
+probe protocol. Neither mDNS metadata nor a successful probe is accepted as
+cryptographic identity.
 
-```text
-React UI
-  ↓
-nativeBridge.ts
-  ↓ only when __TAURI_INTERNALS__ exists
-Tauri invoke command
-  ↓
-Rust native service
-```
+## Direct peer file protocol
 
-The ordinary browser build does not emulate or invent native results.
+File transfer reuses the already authenticated PeerSession and signed-frame
+path.
 
-## Native LAN discovery
-
-The desktop app advertises and browses the DNS-SD service:
+Control frames:
 
 ```text
-_phircq._tcp.local.
+file.offer
+file.accept
+file.reject
+file.complete
+file.receipt
 ```
 
-A discovered record contains non-authoritative discovery metadata such as a
-peer id, display name and PHircQ version. That metadata is useful for finding a
-nearby node but is **not** used as cryptographic trust evidence.
-
-Each native process also opens a real ephemeral TCP probe listener. The exact
-listener port is placed in the mDNS SRV record. A probe response contains:
+Data frames:
 
 ```text
-schema = phircq.native-probe.v1
-peer_id
-display_name
-version
+file.chunk
+  transferId
+  index
+  base64 bytes
 ```
 
-The client verifies that the probe's peer id matches the mDNS peer id before
-reporting the node as reachable.
-
-Current discovery flow:
+Each offer freezes:
 
 ```text
-mDNS resolve
-  ↓
-UNTRUSTED nearby node
-  ↓
-optional native reachability probe
-  ↓
-operator still uses signed/fingerprint trust path
+transfer id
+room
+display name
+filename
+MIME type
+byte size
+SHA-256
+chunk size
+chunk count
 ```
 
-The next native networking rung can automate the handoff into signed linking,
-but it must preserve the same explicit trust boundary rather than treating mDNS
-as identity.
+The receiver validates the offer before presenting it. No chunk is accepted
+until the operator accepts that transfer id.
+
+The sender waits on the transport `drain()` contract while the RTCDataChannel
+buffer is above the configured threshold. This provides actual browser
+backpressure rather than simply adding a progress bar to a memory explosion.
+
+The receiver enforces:
+
+- transfer must be from an already trusted peer
+- offer must be explicitly accepted
+- filename must be safe and bounded
+- total size must be at or below 25 MiB
+- chunk index and byte length must match the negotiated layout
+- received byte count must equal the declared size
+- final SHA-256 must equal the signed offer hash
+- local BlobStore must accept the bytes
+- REMOTE_PEER must pass `SEND_FILE` through the Action Bus
+
+Only after those checks does the attachment appear in room history. The receiver
+then signs a success or failure receipt back to the sender.
+
+Current v0.7 hashing is final SHA-256 after bounded reassembly. Incremental hash
+state, persistent offsets and resume negotiation remain intentionally separate
+future work.
