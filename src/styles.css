@@ -274,3 +274,73 @@ input:focus { border-color: #a66d17; }
   .composer { grid-template-columns: auto 1fr auto; }
   .composer button:first-of-type { display: none; }
 }
+
+.side-tabs.three { grid-template-columns: repeat(3, 1fr); }
+
+.agent-panel {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 12px;
+  overflow: auto;
+}
+
+.agent-panel label {
+  display: grid;
+  gap: 4px;
+  color: #8f8067;
+  font-size: 11px;
+}
+
+.agent-panel select,
+.agent-panel textarea {
+  width: 100%;
+  border: 1px solid #443823;
+  background: #0f0d0a;
+  color: #d9c9a6;
+  padding: 8px;
+  font: inherit;
+}
+
+.agent-panel button {
+  border: 1px solid #6d4918;
+  background: #2c2112;
+  color: #d9c9a6;
+  padding: 8px;
+}
+
+.agent-panel button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.agent-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  text-align: left;
+}
+
+.agent-row.selected {
+  border-color: #e49a1c;
+  color: #f0aa2a;
+}
+
+.agent-row small,
+.agent-meta span,
+.agent-meta code,
+.muted {
+  color: #7f7058;
+  font-size: 11px;
+}
+
+.agent-console {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #3a3021;
+}
+
+.agent-meta {
+  display: grid;
+  gap: 3px;
+}

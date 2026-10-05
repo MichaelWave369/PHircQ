@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AgentRegistry, type AgentAdapter } from "./agents";
 import { MemoryBlobStore } from "./attachments";
 import { ClientRuntime } from "./runtime";
 import { MemoryStore } from "./store";
@@ -61,5 +62,40 @@ describe("ClientRuntime", () => {
 
     const restored = await runtime.getAttachmentBlob(meta.id);
     expect(await restored?.text()).toBe("hello from PHircQ");
+  });
+
+  it("runs an agent through authority and the shared room message path", async () => {
+    const adapter: AgentAdapter = {
+      provider: "ollama",
+      async generate() {
+        return "agent says hello";
+      }
+    };
+
+    const runtime = new ClientRuntime(new MemoryStore(), {
+      agentRegistry: new AgentRegistry([adapter])
+    });
+
+    const agent = runtime.createOllamaAgent({
+      name: "LocalCoder",
+      model: "test-model",
+      endpoint: "http://localhost:11434"
+    });
+
+    await runtime.invokeAgent(agent.id, "say hello");
+
+    const actor = runtime.state.actors.find(
+      (item) => item.id === agent.actorId
+    );
+
+    expect(actor?.presence).toBe("AGENT_IDLE");
+    expect(runtime.state.messages.at(-1)?.actorId).toBe(agent.actorId);
+    expect(runtime.state.messages.at(-1)?.content).toBe("agent says hello");
+    expect(
+      runtime.state.ledger.some((entry) => entry.action === "agent.invoke")
+    ).toBe(true);
+    expect(
+      runtime.state.ledger.some((entry) => entry.action === "agent.complete")
+    ).toBe(true);
   });
 });

@@ -11,18 +11,23 @@
 
 ## Rung 2 — Durable persistence
 - [x] packaged SQLite via sql.js
-- [x] normalized SQLite tables for local runtime state
+- [x] normalized local runtime tables
 - [x] migration from v0.1 browser state
 - [x] attachment metadata + SHA-256
 - [x] bounded IndexedDB blob storage
-- [x] local file attachment/download UI
-- [x] file actions governed by SEND_FILE authority
+- [x] governed local file attachment/download
 
 ## Rung 3 — Agents
-- [ ] AgentAdapter interface
-- [ ] Ollama discovery
-- [ ] governed tool permissions
-- [ ] agent-to-agent rooms
+- [x] AgentAdapter interface
+- [x] Ollama discovery
+- [x] configurable local endpoint
+- [x] persisted agent definitions
+- [x] MANAGE_AGENT and INVOKE_AGENT authority
+- [x] agent room participation through message.send
+- [x] enable / disable controls
+- [x] recent-room context
+- [ ] autonomous triggers and subscriptions
+- [ ] non-Ollama provider adapters
 
 ## Rung 4 — Transport
 - [ ] LocalTransport
