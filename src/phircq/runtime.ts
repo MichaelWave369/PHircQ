@@ -11,7 +11,8 @@ import type {
   LedgerEntry,
   Message,
   Room,
-  RuntimeSnapshot
+  RuntimeSnapshot,
+  PeerTrust
 } from "./types";
 import type { SnapshotStore } from "./store";
 
@@ -23,7 +24,7 @@ function defaultSnapshot(): RuntimeSnapshot {
     displayName: "Operator",
     type: "HUMAN",
     presence: "ONLINE",
-    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE", "INVOKE_AGENT", "MANAGE_AGENT"]
+    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE", "INVOKE_AGENT", "MANAGE_AGENT", "MANAGE_PEER"]
   };
 
   const phiBot: Actor = {
@@ -61,7 +62,8 @@ function defaultSnapshot(): RuntimeSnapshot {
     ],
     ledger: [],
     attachments: [],
-    agents: []
+    agents: [],
+    peers: []
   };
 }
 
@@ -84,7 +86,7 @@ export class ClientRuntime {
 
     const self = this.snapshot.actors.find((actor) => actor.id === this.snapshot.selfId);
     if (self) {
-      for (const capability of ["INVOKE_AGENT", "MANAGE_AGENT"]) {
+      for (const capability of ["INVOKE_AGENT", "MANAGE_AGENT", "MANAGE_PEER"]) {
         if (!self.capabilities.includes(capability)) self.capabilities.push(capability);
       }
     }
@@ -351,6 +353,137 @@ export class ClientRuntime {
     }
   }
 
+  trustPeer(input: {
+    peerId: string;
+    displayName: string;
+    fingerprint: string;
+  }): PeerTrust {
+    const peerId = input.peerId.trim();
+    const displayName = input.displayName.trim();
+    const fingerprint = input.fingerprint.trim();
+
+    if (!peerId || !displayName || !fingerprint) {
+      throw new Error("Peer id, display name and fingerprint are required.");
+    }
+
+    const trust: PeerTrust = {
+      peerId,
+      displayName,
+      fingerprint,
+      trustedAt: new Date().toISOString()
+    };
+
+    const accepted = this.bus.dispatch({
+      actorId: this.snapshot.selfId,
+      type: "peer.trust",
+      target: peerId,
+      payload: { trust }
+    });
+
+    if (!accepted) throw new Error("Peer trust denied by authority.");
+    this.persist();
+    return structuredClone(trust);
+  }
+
+  removePeer(peerId: string): void {
+    const accepted = this.bus.dispatch({
+      actorId: this.snapshot.selfId,
+      type: "peer.remove",
+      target: peerId
+    });
+
+    if (!accepted) throw new Error("Peer removal denied by authority.");
+    this.persist();
+  }
+
+  receivePeerChat(input: {
+    peerId: string;
+    displayName: string;
+    roomName: string;
+    text: string;
+    frameId: string;
+  }): boolean {
+    const trust = this.snapshot.peers.find(
+      (peer) => peer.peerId === input.peerId
+    );
+    if (!trust) {
+      this.ledger(
+        {
+          actorId: this.snapshot.selfId,
+          type: "peer.message.reject",
+          target: input.peerId
+        },
+        "DENY",
+        "untrusted peer"
+      );
+      this.persist();
+      return false;
+    }
+
+    const room = this.snapshot.rooms.find(
+      (candidate) =>
+        candidate.name.toLowerCase() === input.roomName.toLowerCase() &&
+        !candidate.archived
+    );
+    if (!room) {
+      this.ledger(
+        {
+          actorId: this.snapshot.selfId,
+          type: "peer.message.reject",
+          target: input.peerId
+        },
+        "DENY",
+        `unknown room ${input.roomName}`
+      );
+      this.persist();
+      return false;
+    }
+
+    const actorId = `peer_${input.peerId}`;
+    let actor = this.snapshot.actors.find((item) => item.id === actorId);
+    if (!actor) {
+      actor = {
+        id: actorId,
+        displayName: trust.displayName || input.displayName,
+        type: "REMOTE_PEER",
+        presence: "ONLINE",
+        capabilities: ["SEND_MESSAGE"]
+      };
+      this.snapshot.actors.push(actor);
+    } else {
+      actor.displayName = trust.displayName || input.displayName;
+      actor.presence = "ONLINE";
+      if (!actor.capabilities.includes("SEND_MESSAGE")) {
+        actor.capabilities.push("SEND_MESSAGE");
+      }
+    }
+
+    if (!room.memberIds.includes(actorId)) room.memberIds.push(actorId);
+
+    const accepted = this.bus.dispatch({
+      actorId,
+      type: "message.send",
+      target: room.id,
+      payload: {
+        text: input.text,
+        format: "text",
+        attachmentIds: []
+      }
+    });
+
+    this.ledger(
+      {
+        actorId: this.snapshot.selfId,
+        type: accepted ? "peer.message.accept" : "peer.message.reject",
+        target: input.peerId
+      },
+      accepted ? "ALLOW" : "DENY",
+      input.frameId
+    );
+    this.persist();
+    return accepted;
+  }
+
   selectRoom(roomId: string): void {
     if (
       this.snapshot.rooms.some(
@@ -476,6 +609,39 @@ export class ClientRuntime {
 
     if (action.type === "agent.invoke") {
       this.ledger(action, "ALLOW");
+      return;
+    }
+
+    if (action.type === "peer.trust") {
+      const { trust } = action.payload as { trust: PeerTrust };
+      const existing = this.snapshot.peers.find(
+        (peer) => peer.peerId === trust.peerId
+      );
+
+      if (existing) Object.assign(existing, trust);
+      else this.snapshot.peers.push(trust);
+
+      this.ledger(
+        action,
+        "ALLOW",
+        `${trust.displayName} ${trust.fingerprint.slice(0, 16)}…`
+      );
+      return;
+    }
+
+    if (action.type === "peer.remove") {
+      this.snapshot.peers = this.snapshot.peers.filter(
+        (peer) => peer.peerId !== action.target
+      );
+      this.snapshot.actors = this.snapshot.actors.filter(
+        (actor) => actor.id !== `peer_${action.target}`
+      );
+      for (const room of this.snapshot.rooms) {
+        room.memberIds = room.memberIds.filter(
+          (actorId) => actorId !== `peer_${action.target}`
+        );
+      }
+      this.ledger(action, "ALLOW", "trust removed");
       return;
     }
 

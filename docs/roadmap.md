@@ -29,17 +29,23 @@
 - [ ] autonomous triggers and subscriptions
 - [ ] non-Ollama provider adapters
 
-## Rung 4 — Transport
-- [ ] LocalTransport
-- [ ] WebRTC transport
-- [ ] explicit peer trust
-- [ ] signed frames
-- [ ] replay / duplicate rejection
+## Rung 4 — Transport core
+- [x] formal Transport contract
+- [x] paired two-runtime acceptance harness
+- [x] WebRTC RTCDataChannel transport
+- [x] explicit persisted peer trust
+- [x] ECDSA P-256 signed frames
+- [x] public-key fingerprints
+- [x] replay / duplicate rejection
+- [x] governed remote message admission
+- [x] real browser WebRTC strict-local self-test
+- [ ] user-facing offer / answer workflow
+- [ ] reconnect / link lifecycle UX
 
 ## Rung 5 — Native + LAN
 - [ ] Tauri desktop shell
 - [ ] mDNS / LAN discovery
-- [ ] STRICT LOCAL mode
+- [ ] STRICT LOCAL mode for native discovery/linking
 - [ ] direct peer files
 
 ## Later
