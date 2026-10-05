@@ -429,3 +429,34 @@ input:focus { border-color: #a66d17; }
   .composer { grid-template-columns: auto 1fr auto; }
   .composer button:first-of-type { display: none; }
 }
+
+.lan-panel {
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #3a3021;
+}
+
+.lan-peer {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #3a3021;
+  background: #11100c;
+}
+
+.lan-peer code,
+.lan-peer span,
+.lan-peer small {
+  overflow-wrap: anywhere;
+  color: #7f7058;
+  font-size: 10px;
+}
+
+.probe-ok {
+  color: #c8b36d !important;
+}
+
+.probe-fail {
+  color: #a56d5d !important;
+}

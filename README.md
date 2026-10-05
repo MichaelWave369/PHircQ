@@ -9,7 +9,7 @@ media and governed automation.
 Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger → Transport
 ```
 
-## v0.5 Paper Link rung
+## v0.6 native LAN rung
 
 ### Working
 
@@ -18,80 +18,79 @@ Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger �
 - packaged SQLite persistence
 - governed local attachments with SHA-256 receipts
 - provider-neutral AgentAdapter and local Ollama agents
-- formal Transport interface
 - WebRTC RTCDataChannel transport
 - ECDSA P-256 signed peer frames
-- SHA-256 public-key fingerprints
-- explicit persisted peer trust and trust removal
-- replay / duplicate frame rejection
-- governed REMOTE_PEER message admission
-- strict-local WebRTC self-test with no external ICE servers
-- **Paper Link** manual offer/answer workflow
-- fingerprint comparison before trust
-- two-browser/two-machine signed peer chat
-- disconnect and manual re-link lifecycle
+- explicit peer fingerprint trust
+- Paper Link manual two-client WebRTC workflow
+- **Tauri v2 desktop shell scaffold**
+- **native mDNS/DNS-SD discovery**
+- native PHircQ service advertisement as `_phircq._tcp.local.`
+- real local TCP reachability probe for discovered PHircQ nodes
+- browser build remains honest and does not fake native LAN discovery
+- native discovery does not auto-trust or auto-admit peers
 
-### Paper Link
+### Native desktop
 
-Paper Link deliberately uses no signaling server.
-
-1. Client A chooses **Make offer**.
-2. A copies its signal to Client B.
-3. B pastes the offer and chooses **Answer pasted offer**.
-4. B copies the answer back to A.
-5. A pastes it and chooses **Apply pasted answer**.
-6. Both operators compare the displayed SHA-256 identity fingerprints.
-7. Each side explicitly trusts the other fingerprint.
-8. Both choose **Connect chat**.
-9. Messages sent through Paper Link enter the normal PHircQ room and ledger path.
-
-The signal is intentionally plain JSON so it can be inspected, copied through
-another messenger, saved to a file, read over a call, or moved however the
-operators choose. Humanity has reinvented exchanging phone numbers, except now
-the phone number contains SDP and a public key.
-
-### Privacy and security truth
-
-The strict-local Paper Link configuration uses:
-
-```ts
-new RTCPeerConnection({ iceServers: [] })
-```
-
-PHircQ therefore does not silently contact a STUN or TURN service in this mode.
-That also means strict-local links are primarily useful where direct ICE
-connectivity exists, commonly on the same LAN. Cross-NAT Internet connectivity
-is **not** claimed in this rung.
-
-WebRTC RTCDataChannel supplies encrypted transport. PHircQ's ECDSA signatures
-add application-level identity/provenance and replay checking. The signatures
-are not themselves encryption.
-
-### Still planned
-
-- rendezvous / optional signaling service
-- automatic reconnect
-- native Tauri shell
-- mDNS LAN discovery
-- direct peer file transfer
-- voice/video/screen share
-- synchronized media
-- plugins and federation
-
-## Run
+Install Rust and the platform prerequisites for Tauri, then:
 
 ```bash
 npm install
+npm run tauri:dev
+```
+
+The regular web build still works with:
+
+```bash
 npm run dev
 ```
 
-Open `http://localhost:3690`.
+The desktop shell exposes native commands only when PHircQ is running inside
+Tauri. In an ordinary browser the LAN panel explicitly reports that native
+discovery is unavailable.
+
+### LAN discovery contract
+
+The native app publishes and browses:
+
+```text
+_phircq._tcp.local.
+```
+
+Discovery TXT metadata includes:
+
+```text
+peer_id
+display_name
+version
+paper_link=1
+trust=explicit
+```
+
+Each desktop node also opens a small ephemeral TCP probe endpoint and advertises
+that actual port through DNS-SD. The UI can probe a discovered node and verify a
+versioned PHircQ hello before calling it reachable.
+
+**Discovery is not trust.** A discovered device does not automatically become a
+REMOTE_PEER actor and does not bypass the fingerprint trust path.
+
+### Still planned
+
+- automatic LAN handoff from discovery into signed peer linking
+- direct peer file transfer
+- native persistent identity/key storage
+- optional rendezvous / Internet traversal mode
+- voice/video/screen share
+- synchronized media
+- installers/signing/release packaging
+- plugins and federation
 
 ## Verify
 
 ```bash
 npm test
 npm run build
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
 See [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md).

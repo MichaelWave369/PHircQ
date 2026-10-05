@@ -43,22 +43,34 @@
 ## Rung 5 — Paper Link peer UX
 - [x] user-facing manual offer / answer workflow
 - [x] no signaling server required
-- [x] identity embedded in manual signal
-- [x] signal/public-key fingerprint consistency validation
 - [x] operator fingerprint comparison
 - [x] explicit trust before peer chat
 - [x] two-browser / two-machine room chat path
-- [x] disconnect
+- [x] disconnect and manual re-link
 - [x] trust removal
-- [x] manual reset / re-link
 - [ ] automatic reconnect
 - [ ] optional rendezvous service
 
 ## Rung 6 — Native + LAN
-- [ ] Tauri desktop shell
-- [ ] mDNS / LAN discovery
-- [ ] STRICT LOCAL native discovery/linking
+- [x] Tauri v2 desktop shell scaffold
+- [x] native bridge with web-safe fallback
+- [x] mDNS/DNS-SD service advertisement
+- [x] mDNS/DNS-SD peer browsing
+- [x] real native reachability probe endpoint
+- [x] resolved peer snapshot in UI
+- [x] discovery remains untrusted by default
+- [x] native Rust CI check + unit tests
+- [ ] automatic discovery → signed link handoff
+- [ ] native persistent peer identity
 - [ ] direct peer files
+
+## Rung 7 — Native peer data
+- [ ] direct file offer/accept
+- [ ] chunked transfer with backpressure
+- [ ] incremental SHA-256 verification
+- [ ] resumable transfer
+- [ ] bounded receive storage
+- [ ] reconnect lifecycle
 
 ## Later
 - [ ] voice/video/screen share

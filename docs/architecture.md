@@ -36,15 +36,8 @@ The web shell uses packaged `sql.js` for SQLite semantics. The SQLite database
 is serialized into browser-local storage, while attachment bytes are kept
 separately in IndexedDB.
 
-- SQLite stores actors, rooms, memberships, messages, attachment metadata,
-  agent definitions, peer trust and ledger receipts.
-- IndexedDB stores opaque attachment bytes.
-- Messages refer to attachments by stable IDs.
-- SHA-256 is calculated before an attachment enters the runtime.
-- File attachment actions still pass through the Action Bus and authority layer.
-
-A later Tauri rung can replace the browser backing stores with native file-based
-SQLite and filesystem blobs without changing the runtime contract.
+A later native persistence rung can replace these backing stores without
+changing the runtime contract.
 
 ## Agent boundary
 
@@ -67,13 +60,7 @@ Action Bus
 Room + Ledger
 ```
 
-A local model does not receive filesystem, shell, camera, microphone,
-network-peer or script authority merely because it can generate text.
-
-## Transport and peer trust boundary
-
-Transport moves opaque PHircQ events. It does not decide who is trusted and it
-does not directly mutate room state.
+## Peer boundary
 
 ```text
 Transport
@@ -95,47 +82,62 @@ Room
 Ledger
 ```
 
-Peer frames use ECDSA P-256 signatures. The exported public key is fingerprinted
-with SHA-256 and the fingerprint is what the operator trust record binds to the
-peer id. A valid signature alone is not enough for admission.
+Discovery never sits inside that trust chain. Finding a device on the LAN does
+not make it trusted.
 
-## Paper Link signaling boundary
+## Native shell boundary
 
-Paper Link separates **connection setup** from **chat trust**.
-
-The manual offer/answer bundle contains:
+The Tauri shell adds native capabilities behind an explicit bridge:
 
 ```text
-schema
-session id
-offer or answer SDP
-peer id
-display name
-public verification key
-SHA-256 fingerprint
+React UI
+  ↓
+nativeBridge.ts
+  ↓ only when __TAURI_INTERNALS__ exists
+Tauri invoke command
+  ↓
+Rust native service
 ```
 
-PHircQ validates that the advertised fingerprint matches the included public
-key before accepting the bundle. The operator still has to compare and trust
-the remote fingerprint explicitly before signed room chat is admitted.
+The ordinary browser build does not emulate or invent native results.
 
-The strict-local peer connection is created with `iceServers: []`. No STUN or
-TURN provider is contacted by PHircQ in this mode. Because there is no relay,
-cross-NAT Internet reachability is not guaranteed.
+## Native LAN discovery
 
-The current re-link lifecycle is intentionally explicit:
+The desktop app advertises and browses the DNS-SD service:
 
 ```text
-disconnect
-  ↓
-close RTCDataChannel + RTCPeerConnection
-  ↓
-make fresh offer
-  ↓
-fresh session
-  ↓
-reuse or re-confirm persisted trust
+_phircq._tcp.local.
 ```
 
-Automatic reconnect and an optional rendezvous layer remain separate future
-capabilities so they cannot quietly erode the strict-local guarantee.
+A discovered record contains non-authoritative discovery metadata such as a
+peer id, display name and PHircQ version. That metadata is useful for finding a
+nearby node but is **not** used as cryptographic trust evidence.
+
+Each native process also opens a real ephemeral TCP probe listener. The exact
+listener port is placed in the mDNS SRV record. A probe response contains:
+
+```text
+schema = phircq.native-probe.v1
+peer_id
+display_name
+version
+```
+
+The client verifies that the probe's peer id matches the mDNS peer id before
+reporting the node as reachable.
+
+Current discovery flow:
+
+```text
+mDNS resolve
+  ↓
+UNTRUSTED nearby node
+  ↓
+optional native reachability probe
+  ↓
+operator still uses signed/fingerprint trust path
+```
+
+The next native networking rung can automate the handoff into signed linking,
+but it must preserve the same explicit trust boundary rather than treating mDNS
+as identity.
