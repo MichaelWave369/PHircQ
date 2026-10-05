@@ -136,7 +136,7 @@ export function NetworkPanel({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [localDisplayName, onNotice]);
+  }, [localDisplayName, onNotice, linkState]);
 
   const remoteTrusted = remotePeer
     ? snapshot.peers.some(
