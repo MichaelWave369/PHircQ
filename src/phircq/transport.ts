@@ -12,6 +12,7 @@ export interface Transport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   send(event: TransportEvent): Promise<void>;
+  drain(maxBufferedAmount?: number): Promise<void>;
   subscribe(handler: (event: TransportEvent) => void): () => void;
 }
 
@@ -51,6 +52,10 @@ export class MemoryTransport implements Transport {
     queueMicrotask(() => {
       for (const handler of this.peer!.handlers) handler(copy);
     });
+  }
+
+  async drain(): Promise<void> {
+    // Deterministic in-memory transport has no kernel/browser send buffer.
   }
 
   subscribe(handler: (event: TransportEvent) => void): () => void {
@@ -151,6 +156,54 @@ export class WebRtcTransport implements Transport {
       throw new Error("WebRTC data channel is not open.");
     }
     this.channel.send(JSON.stringify(event));
+  }
+
+  async drain(maxBufferedAmount = 256 * 1024): Promise<void> {
+    if (this.channel.readyState !== "open") {
+      throw new Error("WebRTC data channel is not open.");
+    }
+
+    if (this.channel.bufferedAmount <= maxBufferedAmount) return;
+
+    const previousThreshold = this.channel.bufferedAmountLowThreshold;
+    this.channel.bufferedAmountLowThreshold = Math.max(
+      1,
+      Math.floor(maxBufferedAmount / 2)
+    );
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error("Timed out waiting for WebRTC send buffer to drain."));
+        }, 10000);
+
+        const onLow = () => {
+          cleanup();
+          resolve();
+        };
+        const onClose = () => {
+          cleanup();
+          reject(new Error("WebRTC data channel closed while draining."));
+        };
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          this.channel.removeEventListener("bufferedamountlow", onLow);
+          this.channel.removeEventListener("close", onClose);
+        };
+
+        this.channel.addEventListener("bufferedamountlow", onLow, { once: true });
+        this.channel.addEventListener("close", onClose, { once: true });
+
+        if (this.channel.bufferedAmount <= this.channel.bufferedAmountLowThreshold) {
+          cleanup();
+          resolve();
+        }
+      });
+    } finally {
+      this.channel.bufferedAmountLowThreshold = previousThreshold;
+    }
   }
 
   subscribe(handler: (event: TransportEvent) => void): () => void {
