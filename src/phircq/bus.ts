@@ -19,8 +19,12 @@ export class Authority {
       return actor.capabilities.includes("SEND_FILE");
     }
 
-    if (action.type.startsWith("agent.")) {
+    if (action.type === "agent.invoke") {
       return actor.capabilities.includes("INVOKE_AGENT");
+    }
+
+    if (action.type.startsWith("agent.")) {
+      return actor.capabilities.includes("MANAGE_AGENT");
     }
 
     if (action.type.startsWith("identity.")) {
