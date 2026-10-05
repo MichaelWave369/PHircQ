@@ -9,7 +9,7 @@ media and governed automation.
 Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger → Transport
 ```
 
-## v0.4 transport rung
+## v0.5 Paper Link rung
 
 ### Working
 
@@ -19,31 +19,62 @@ Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger �
 - governed local attachments with SHA-256 receipts
 - provider-neutral AgentAdapter and local Ollama agents
 - formal Transport interface
-- paired in-memory transport acceptance harness
 - WebRTC RTCDataChannel transport
 - ECDSA P-256 signed peer frames
 - SHA-256 public-key fingerprints
-- explicit persisted peer trust
+- explicit persisted peer trust and trust removal
 - replay / duplicate frame rejection
-- remote messages enter the same governed message path as local actors
-- strict-local browser WebRTC self-test with `iceServers: []`
+- governed REMOTE_PEER message admission
+- strict-local WebRTC self-test with no external ICE servers
+- **Paper Link** manual offer/answer workflow
+- fingerprint comparison before trust
+- two-browser/two-machine signed peer chat
+- disconnect and manual re-link lifecycle
 
-### Experimental
+### Paper Link
 
-WebRTC transport is now real and testable, but PHircQ does **not yet** claim a
-complete user-facing remote connection workflow. Manual signaling, rendezvous,
-reconnect UX, direct peer file transfer and multi-peer rooms remain later rungs.
+Paper Link deliberately uses no signaling server.
 
-The browser self-test deliberately configures no external STUN or TURN service.
-It proves a real local RTCDataChannel can open and carry a PHircQ payload.
+1. Client A chooses **Make offer**.
+2. A copies its signal to Client B.
+3. B pastes the offer and chooses **Answer pasted offer**.
+4. B copies the answer back to A.
+5. A pastes it and chooses **Apply pasted answer**.
+6. Both operators compare the displayed SHA-256 identity fingerprints.
+7. Each side explicitly trusts the other fingerprint.
+8. Both choose **Connect chat**.
+9. Messages sent through Paper Link enter the normal PHircQ room and ledger path.
 
-### Planned
+The signal is intentionally plain JSON so it can be inspected, copied through
+another messenger, saved to a file, read over a call, or moved however the
+operators choose. Humanity has reinvented exchanging phone numbers, except now
+the phone number contains SDP and a public key.
 
-- user-facing peer link / signaling workflow
+### Privacy and security truth
+
+The strict-local Paper Link configuration uses:
+
+```ts
+new RTCPeerConnection({ iceServers: [] })
+```
+
+PHircQ therefore does not silently contact a STUN or TURN service in this mode.
+That also means strict-local links are primarily useful where direct ICE
+connectivity exists, commonly on the same LAN. Cross-NAT Internet connectivity
+is **not** claimed in this rung.
+
+WebRTC RTCDataChannel supplies encrypted transport. PHircQ's ECDSA signatures
+add application-level identity/provenance and replay checking. The signatures
+are not themselves encryption.
+
+### Still planned
+
+- rendezvous / optional signaling service
+- automatic reconnect
 - native Tauri shell
 - mDNS LAN discovery
 - direct peer file transfer
-- voice/video
+- voice/video/screen share
 - synchronized media
 - plugins and federation
 

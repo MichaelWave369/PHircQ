@@ -35,6 +35,20 @@ describe("ActionBus", () => {
     expect(denied).toHaveBeenCalledOnce();
   });
 
+  it("requires MANAGE_PEER for trust changes", () => {
+    const handler = vi.fn();
+    const denied = vi.fn();
+    const manager: Actor = {
+      ...actor,
+      capabilities: ["MANAGE_PEER"]
+    };
+    const bus = new ActionBus(() => [manager], new Authority(), handler, denied);
+
+    expect(bus.dispatch({ actorId: "a", type: "peer.trust" })).toBe(true);
+    expect(bus.dispatch({ actorId: "a", type: "peer.remove" })).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
   it("denies a missing capability", () => {
     const handler = vi.fn();
     const denied = vi.fn();
