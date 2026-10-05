@@ -426,7 +426,9 @@ export class PeerSession {
           transferId: frame.payload.transferId,
           status: "accepted"
         });
-        void this.streamOutgoing(frame.payload.transferId);
+        void this.streamOutgoing(frame.payload.transferId).catch(() => {
+          // streamOutgoing already reports a failed transfer through handlers.
+        });
         return;
 
       case "file.reject":
