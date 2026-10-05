@@ -8,8 +8,9 @@ import { BrowserBlobStore } from "./phircq/attachments";
 import { ClientRuntime } from "./phircq/runtime";
 import { SqliteSnapshotStore } from "./phircq/sqliteStore";
 import { LocalStorageStore } from "./phircq/store";
+import { runBrowserWebRtcAcceptance } from "./phircq/webrtcAcceptance";
 
-type SideTab = "people" | "ledger" | "agents";
+type SideTab = "people" | "ledger" | "agents" | "network";
 type PersistenceMode = "BOOTING" | "SQLITE" | "FALLBACK";
 
 export default function App() {
@@ -27,6 +28,8 @@ export default function App() {
   const [agentPrompt, setAgentPrompt] = useState("");
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [agentBusy, setAgentBusy] = useState(false);
+  const [networkBusy, setNetworkBusy] = useState(false);
+  const [networkSteps, setNetworkSteps] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -232,6 +235,22 @@ export default function App() {
     }
   }
 
+  async function runNetworkAcceptance() {
+    setNetworkBusy(true);
+    setNetworkSteps(["starting strict-local browser WebRTC acceptance…"]);
+    try {
+      const result = await runBrowserWebRtcAcceptance();
+      setNetworkSteps(result.steps);
+      setNotice(
+        result.ok
+          ? "WebRTC strict-local self-test passed."
+          : "WebRTC strict-local self-test failed."
+      );
+    } finally {
+      setNetworkBusy(false);
+    }
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -249,6 +268,7 @@ export default function App() {
         <button className="active">Rooms</button>
         <button>Talk</button>
         <button onClick={() => setSideTab("agents")}>Agents</button>
+        <button onClick={() => setSideTab("network")}>Net</button>
       </nav>
 
       <section className="workspace">
@@ -378,7 +398,7 @@ export default function App() {
         </section>
 
         <aside className="people pane">
-          <div className="side-tabs three">
+          <div className="side-tabs four">
             <button
               className={sideTab === "people" ? "active" : ""}
               onClick={() => setSideTab("people")}
@@ -396,6 +416,12 @@ export default function App() {
               onClick={() => setSideTab("agents")}
             >
               Agents
+            </button>
+            <button
+              className={sideTab === "network" ? "active" : ""}
+              onClick={() => setSideTab("network")}
+            >
+              Net
             </button>
           </div>
 
@@ -529,13 +555,70 @@ export default function App() {
               )}
             </div>
           )}
+
+
+          {sideTab === "network" && (
+            <div className="network-panel">
+              <div className="pane-title">NETWORK CONTRACT</div>
+              <div className="network-fact">
+                <span>mode</span>
+                <strong>STRICT LOCAL</strong>
+              </div>
+              <div className="network-fact">
+                <span>trusted peers</span>
+                <strong>{state.peers.length}</strong>
+              </div>
+              <div className="network-fact">
+                <span>frame signing</span>
+                <strong>ECDSA P-256</strong>
+              </div>
+              <div className="network-fact">
+                <span>external STUN/TURN</span>
+                <strong>OFF</strong>
+              </div>
+
+              <button
+                disabled={networkBusy}
+                onClick={() => void runNetworkAcceptance()}
+              >
+                {networkBusy ? "Testing…" : "Run real WebRTC self-test"}
+              </button>
+
+              <div className="network-log">
+                {networkSteps.length === 0 ? (
+                  <p className="muted">
+                    Self-test creates two real browser RTCPeerConnections with
+                    no external ICE servers and moves a PHircQ payload over a
+                    real RTCDataChannel.
+                  </p>
+                ) : (
+                  networkSteps.map((step, index) => (
+                    <div key={`${index}-${step}`}>[{index + 1}] {step}</div>
+                  ))
+                )}
+              </div>
+
+              <div className="pane-title">TRUSTED PEERS</div>
+              {state.peers.length === 0 ? (
+                <p className="muted">No trusted remote peers yet.</p>
+              ) : (
+                state.peers.map((peer) => (
+                  <div className="peer-row" key={peer.peerId}>
+                    <strong>{peer.displayName}</strong>
+                    <code>{peer.fingerprint.slice(0, 20)}…</code>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
         </aside>
       </section>
 
       <footer className="footer">
         <span>LOCAL</span>
         <span>db {persistence}</span>
-        <span>peers 0</span>
+        <span>peers {state.peers.length}</span>
         <span>agents {state.agents.length}</span>
         <span>files {state.attachments.length}</span>
         <span>voice PLANNED</span>

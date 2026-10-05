@@ -113,6 +113,16 @@ export class SqliteSnapshotStore implements SnapshotStore {
       }
     }
 
+    let peers: RuntimeSnapshot["peers"] = [];
+    const peersJson = settingMap.get("peersJson");
+    if (peersJson) {
+      try {
+        peers = JSON.parse(peersJson) as RuntimeSnapshot["peers"];
+      } catch {
+        peers = [];
+      }
+    }
+
     const actors = rows<{
       id: string;
       display_name: string;
@@ -241,7 +251,8 @@ export class SqliteSnapshotStore implements SnapshotStore {
       messages,
       ledger,
       attachments,
-      agents
+      agents,
+      peers
     });
   }
 
@@ -269,6 +280,7 @@ export class SqliteSnapshotStore implements SnapshotStore {
       setting.run(["currentRoomId", normalized.currentRoomId]);
       setting.run(["schemaVersion", String(normalized.schemaVersion)]);
       setting.run(["agentsJson", JSON.stringify(normalized.agents)]);
+      setting.run(["peersJson", JSON.stringify(normalized.peers)]);
       setting.free();
 
       const actor = this.db.prepare(
@@ -423,7 +435,7 @@ export class SqliteSnapshotStore implements SnapshotStore {
         detail TEXT,
         ordinal INTEGER NOT NULL
       );
-      PRAGMA user_version = 2;
+      PRAGMA user_version = 3;
     `);
     this.persistBytes();
   }

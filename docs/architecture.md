@@ -75,3 +75,39 @@ Room + Ledger
 A local model therefore does not receive filesystem, shell, camera, microphone,
 network-peer or script authority merely because it can generate text. Those
 capabilities must be introduced separately and explicitly.
+
+
+## Transport and peer trust boundary
+
+Transport moves opaque PHircQ events. It does not decide who is trusted and it
+does not directly mutate room state.
+
+The v0.4 peer path is:
+
+```text
+Transport
+  ↓
+SignedFrame verification
+  ↓
+ReplayWindow
+  ↓
+persisted peer fingerprint trust
+  ↓
+REMOTE_PEER Actor
+  ↓ SEND_MESSAGE
+Action Bus
+  ↓
+Authority
+  ↓
+Room
+  ↓
+Ledger
+```
+
+Peer frames use ECDSA P-256 signatures. The exported public key is fingerprinted
+with SHA-256 and the fingerprint is what the operator trust record binds to the
+peer id. A valid signature alone is not sufficient for admission.
+
+The browser WebRTC acceptance harness uses `RTCPeerConnection({ iceServers: [] })`.
+That proves the transport can operate without silently contacting a STUN/TURN
+provider. It is an acceptance self-test, not yet a complete remote signaling UX.

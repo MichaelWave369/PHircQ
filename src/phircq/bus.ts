@@ -27,6 +27,10 @@ export class Authority {
       return actor.capabilities.includes("MANAGE_AGENT");
     }
 
+    if (action.type.startsWith("peer.")) {
+      return actor.capabilities.includes("MANAGE_PEER");
+    }
+
     if (action.type.startsWith("identity.")) {
       return action.actorId === actor.id;
     }

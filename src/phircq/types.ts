@@ -59,6 +59,13 @@ export interface AgentDefinition {
   enabled: boolean;
 }
 
+export interface PeerTrust {
+  peerId: string;
+  displayName: string;
+  fingerprint: string;
+  trustedAt: string;
+}
+
 export interface RuntimeSnapshot {
   schemaVersion: number;
   selfId: string;
@@ -69,6 +76,7 @@ export interface RuntimeSnapshot {
   ledger: LedgerEntry[];
   attachments: AttachmentMeta[];
   agents: AgentDefinition[];
+  peers: PeerTrust[];
 }
 
 export interface Action {
