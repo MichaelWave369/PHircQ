@@ -199,6 +199,14 @@ export function NetworkPanel({
     );
   }
 
+  function forgetPeer(peerId: string) {
+    runtime.removePeer(peerId);
+    if (remotePeer?.peerId === peerId) {
+      onNotice("Peer trust removed. Existing signed frames will no longer be admitted.");
+    }
+    onRuntimeChange();
+  }
+
   async function connect() {
     const endpoint = endpointRef.current;
 
@@ -362,6 +370,16 @@ export function NetworkPanel({
       </div>
 
       <div className="pane-title">PAPER LINK</div>
+
+      {endpointRef.current && (
+        <div className="fingerprint-card local">
+          <strong>THIS CLIENT</strong>
+          <span>{localDisplayName}</span>
+          <code>{endpointRef.current.identity.fingerprint}</code>
+          <small>Read this fingerprint to the other operator.</small>
+        </div>
+      )}
+
       <p className="muted">
         No signaling server. One client makes an offer, the other pastes it
         and returns an answer. Compare fingerprints before trusting.
@@ -487,6 +505,9 @@ export function NetworkPanel({
           <div className="peer-row" key={peer.peerId}>
             <strong>{peer.displayName}</strong>
             <code>{peer.fingerprint.slice(0, 24)}…</code>
+            <button onClick={() => forgetPeer(peer.peerId)}>
+              Forget trust
+            </button>
           </div>
         ))
       )}
