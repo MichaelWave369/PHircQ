@@ -14,6 +14,12 @@ export interface PeerIdentity {
   fingerprint: string;
 }
 
+export interface StoredPeerIdentity {
+  peerId: string;
+  publicKey: JsonWebKey;
+  privateKey: JsonWebKey;
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -80,6 +86,46 @@ export async function createPeerIdentity(peerId: string): Promise<PeerIdentity> 
     keyPair,
     publicKey,
     fingerprint: await fingerprintPublicKey(publicKey)
+  };
+}
+
+export async function exportPeerIdentity(
+  identity: PeerIdentity
+): Promise<StoredPeerIdentity> {
+  return {
+    peerId: identity.peerId,
+    publicKey: identity.publicKey,
+    privateKey: await crypto.subtle.exportKey(
+      "jwk",
+      identity.keyPair.privateKey
+    )
+  };
+}
+
+export async function importPeerIdentity(
+  stored: StoredPeerIdentity
+): Promise<PeerIdentity> {
+  const privateKey = await crypto.subtle.importKey(
+    "jwk",
+    stored.privateKey,
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign"]
+  );
+
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    stored.publicKey,
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["verify"]
+  );
+
+  return {
+    peerId: stored.peerId,
+    keyPair: { privateKey, publicKey },
+    publicKey: stored.publicKey,
+    fingerprint: await fingerprintPublicKey(stored.publicKey)
   };
 }
 

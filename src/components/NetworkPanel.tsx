@@ -1,11 +1,20 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LanDiscoveryPanel } from "./LanDiscoveryPanel";
+import { getPersistentPeerIdentity } from "../phircq/identityStore";
 import {
   PaperLinkEndpoint,
   encodePaperSignal,
   type PaperPeerDescriptor
 } from "../phircq/paperLink";
 import type { IncomingFileOffer, PeerSession } from "../phircq/peerSession";
+import {
+  isTauriRuntime,
+  sendLanSignal,
+  takeLanSignals,
+  type LanPeer,
+  type LanSignalEnvelope
+} from "../phircq/nativeBridge";
+import type { PeerIdentity } from "../phircq/peerCrypto";
 import type { ClientRuntime } from "../phircq/runtime";
 import type { RuntimeSnapshot } from "../phircq/types";
 import { runBrowserWebRtcAcceptance } from "../phircq/webrtcAcceptance";
@@ -35,7 +44,8 @@ export function NetworkPanel({
   onRuntimeChange,
   onNotice
 }: NetworkPanelProps) {
-  const peerIdRef = useRef(`web-${crypto.randomUUID()}`);
+  const identityRef = useRef<PeerIdentity | null>(null);
+  const lanPollBusyRef = useRef(false);
   const endpointRef = useRef<PaperLinkEndpoint | null>(null);
   const sessionRef = useRef<PeerSession | null>(null);
   const peerFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -52,6 +62,81 @@ export function NetworkPanel({
     useState<IncomingFileOffer | null>(null);
   const [fileTransferStatus, setFileTransferStatus] = useState("");
   const [fileTransferProgress, setFileTransferProgress] = useState(0);
+  const [localFingerprint, setLocalFingerprint] = useState("");
+  const [localPeerId, setLocalPeerId] = useState("");
+  const [lanTarget, setLanTarget] = useState<LanPeer | null>(null);
+
+  async function persistentIdentity(): Promise<PeerIdentity> {
+    if (identityRef.current) return identityRef.current;
+
+    const identity = await getPersistentPeerIdentity();
+    identityRef.current = identity;
+    setLocalFingerprint(identity.fingerprint);
+    setLocalPeerId(identity.peerId);
+    return identity;
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void getPersistentPeerIdentity()
+      .then((identity) => {
+        if (cancelled) return;
+        identityRef.current = identity;
+        setLocalFingerprint(identity.fingerprint);
+        setLocalPeerId(identity.peerId);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          onNotice(
+            error instanceof Error
+              ? error.message
+              : "Unable to load persistent PHircQ identity."
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onNotice]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled || lanPollBusyRef.current) return;
+      lanPollBusyRef.current = true;
+
+      try {
+        const signals = await takeLanSignals();
+        for (const signal of signals) {
+          if (cancelled) break;
+          await handleLanSignal(signal);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          onNotice(
+            error instanceof Error
+              ? error.message
+              : "Unable to read native LAN link signals."
+          );
+        }
+      } finally {
+        lanPollBusyRef.current = false;
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [localDisplayName, onNotice, linkState]);
 
   const remoteTrusted = remotePeer
     ? snapshot.peers.some(
@@ -93,13 +178,152 @@ export function NetworkPanel({
     }
   }
 
+  async function beginLanLink(peer: LanPeer) {
+    await reset(false);
+    setNetworkBusy(true);
+    setLanTarget(peer);
+
+    try {
+      const identity = await persistentIdentity();
+
+      const endpoint = await PaperLinkEndpoint.createOffer({
+        identity,
+        displayName: localDisplayName
+      });
+
+      const encoded = encodePaperSignal(endpoint.localSignal);
+      endpointRef.current = endpoint;
+      setLocalSignal(encoded);
+
+      const delivery = await sendLanSignal(
+        peer.peerId,
+        "offer",
+        encoded
+      );
+
+      if (!delivery.delivered) {
+        await endpoint.close();
+        endpointRef.current = null;
+        setLinkState("ERROR");
+        throw new Error(delivery.detail);
+      }
+
+      setLinkState("WAITING_ANSWER");
+      onNotice(
+        `Secure LAN offer delivered to ${peer.displayName}. Waiting for its answer; trust is still not granted.`
+      );
+    } catch (error) {
+      setLinkState("ERROR");
+      onNotice(
+        error instanceof Error
+          ? error.message
+          : "Unable to begin secure LAN link."
+      );
+    } finally {
+      setNetworkBusy(false);
+    }
+  }
+
+  async function handleLanSignal(envelope: LanSignalEnvelope) {
+    if (envelope.schema !== "phircq.lan-link.v1") return;
+
+    if (envelope.kind === "offer") {
+      if (linkState === "CONNECTED") {
+        onNotice(
+          "Ignored a LAN link offer because this PHircQ client is already connected."
+        );
+        return;
+      }
+
+      await reset(false);
+
+      try {
+        const identity = await persistentIdentity();
+        const endpoint = await PaperLinkEndpoint.acceptOffer(
+          envelope.signal,
+          {
+            identity,
+            displayName: localDisplayName
+          }
+        );
+
+        const remote = endpoint.remotePeer;
+        if (!remote || remote.peerId !== envelope.fromPeerId) {
+          await endpoint.close();
+          throw new Error(
+            "LAN offer identity did not match the verified discovery peer."
+          );
+        }
+
+        endpointRef.current = endpoint;
+        setRemotePeer(remote);
+        const encodedAnswer = encodePaperSignal(endpoint.localSignal);
+        setLocalSignal(encodedAnswer);
+
+        const delivery = await sendLanSignal(
+          envelope.fromPeerId,
+          "answer",
+          encodedAnswer
+        );
+
+        if (!delivery.delivered) {
+          throw new Error(delivery.detail);
+        }
+
+        setLinkState("READY_TO_TRUST");
+        onNotice(
+          `LAN invite from ${remote.displayName} negotiated. Compare fingerprint ${remote.fingerprint.slice(0, 16)}… before trusting.`
+        );
+      } catch (error) {
+        setLinkState("ERROR");
+        onNotice(
+          error instanceof Error
+            ? error.message
+            : "Unable to answer LAN link offer."
+        );
+      }
+
+      return;
+    }
+
+    const endpoint = endpointRef.current;
+    if (!endpoint || endpoint.role !== "offerer") {
+      onNotice("Ignored an unexpected LAN link answer.");
+      return;
+    }
+
+    try {
+      const remote = await endpoint.applyAnswer(envelope.signal);
+
+      if (remote.peerId !== envelope.fromPeerId) {
+        throw new Error(
+          "LAN answer identity did not match the verified discovery peer."
+        );
+      }
+
+      setRemotePeer(remote);
+      setLinkState("READY_TO_TRUST");
+      onNotice(
+        `LAN answer received from ${remote.displayName}. Compare fingerprint ${remote.fingerprint.slice(0, 16)}… before trusting.`
+      );
+    } catch (error) {
+      setLinkState("ERROR");
+      onNotice(
+        error instanceof Error
+          ? error.message
+          : "Unable to apply LAN link answer."
+      );
+    }
+  }
+
   async function newOffer() {
     await reset(false);
     setNetworkBusy(true);
 
     try {
+      const identity = await persistentIdentity();
       const endpoint = await PaperLinkEndpoint.createOffer({
-        peerId: peerIdRef.current,
+        identity,
         displayName: localDisplayName
       });
 
@@ -132,8 +356,9 @@ export function NetworkPanel({
     setNetworkBusy(true);
 
     try {
+      const identity = await persistentIdentity();
       const endpoint = await PaperLinkEndpoint.acceptOffer(remoteSignal, {
-        peerId: peerIdRef.current,
+        identity,
         displayName: localDisplayName
       });
 
@@ -443,6 +668,7 @@ export function NetworkPanel({
     setLocalSignal("");
     if (clearRemote) setRemoteSignal("");
     setRemotePeer(null);
+    setLanTarget(null);
     setIncomingFileOffer(null);
     setFileTransferStatus("");
     setFileTransferProgress(0);
@@ -468,6 +694,10 @@ export function NetworkPanel({
       <div className="network-fact">
         <span>frame signing</span>
         <strong>ECDSA P-256</strong>
+      </div>
+      <div className="network-fact">
+        <span>persistent peer</span>
+        <strong>{localPeerId ? localPeerId.slice(0, 18) + "…" : "LOADING"}</strong>
       </div>
       <div className="network-fact">
         <span>external STUN/TURN</span>
@@ -500,17 +730,30 @@ export function NetworkPanel({
       <LanDiscoveryPanel
         localDisplayName={localDisplayName}
         onNotice={onNotice}
+        onLinkPeer={(peer) => void beginLanLink(peer)}
       />
 
       <div className="pane-title">PAPER LINK</div>
 
-      {endpointRef.current && (
+      {(localFingerprint || endpointRef.current) && (
         <div className="fingerprint-card local">
           <strong>THIS CLIENT</strong>
           <span>{localDisplayName}</span>
-          <code>{endpointRef.current.identity.fingerprint}</code>
-          <small>Read this fingerprint to the other operator.</small>
+          <code>
+            {localFingerprint || endpointRef.current?.identity.fingerprint}
+          </code>
+          <small>
+            Persistent local identity. Read this fingerprint to the other
+            operator before first trust.
+          </small>
         </div>
+      )}
+
+      {lanTarget && linkState === "WAITING_ANSWER" && (
+        <p className="muted">
+          LAN handoff waiting on {lanTarget.displayName}. No cloud signaling
+          service is involved.
+        </p>
       )}
 
       <p className="muted">

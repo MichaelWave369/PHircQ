@@ -9,84 +9,83 @@ media and governed automation.
 Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger → Transport
 ```
 
-## v0.7 direct peer files
+## v0.8 persistent identity + LAN link handoff
 
-PHircQ can now move file bytes across an already trusted Paper Link session.
+PHircQ now preserves a stable local signing identity across app reloads and can
+move the Paper Link offer/answer exchange directly over the verified native LAN
+endpoint.
 
 ### Working
 
 - local rooms, text chat and IRC-style commands
-- capability-gated Action Bus and activity ledger
-- packaged SQLite persistence
-- local governed attachments with SHA-256 receipts
-- local Ollama agents through a provider-neutral AgentAdapter
+- SQLite-backed runtime state
+- governed local attachments
+- local Ollama agents
 - signed WebRTC peer chat
-- ECDSA P-256 peer identities and SHA-256 fingerprints
-- replay rejection and explicit persisted trust
-- Paper Link manual two-client negotiation
-- Tauri v2 desktop shell
-- native mDNS/DNS-SD discovery and real reachability probes
-- **direct signed peer file offers**
-- **explicit remote accept / reject before bytes move**
-- **12 KiB chunked transfer**
-- **RTCDataChannel backpressure drain**
-- **declared-size enforcement**
-- **final SHA-256 verification before storage admission**
-- **receiver receipt back to sender**
-- governed REMOTE_PEER file admission through `SEND_FILE`
+- explicit peer fingerprint trust
+- direct peer files with accept/reject, backpressure and SHA-256 verification
+- Tauri desktop shell
+- native mDNS/DNS-SD discovery
+- native reachability probe
+- **persistent ECDSA P-256 peer identity in the app's IndexedDB/webview vault**
+- **stable peer id and fingerprint across normal reloads**
+- **native LAN offer/answer signal exchange**
+- **discovered peer → secure Paper Link handoff**
+- **no cloud signaling service required for same-LAN handoff**
+- **fingerprint trust is still explicit after negotiation**
 
-### Peer file flow
+### LAN secure-link flow
 
 ```text
-trusted connected peer
+mDNS discovers PHircQ node
   ↓
-signed file.offer
+native probe verifies endpoint + peer id
   ↓
-operator Accept / Reject
-  ↓ accepted only
-chunked signed file.chunk frames
+operator clicks Secure LAN link
   ↓
-RTCDataChannel backpressure
+Paper Link offer sent over local TCP signal endpoint
   ↓
-declared-size validation
+remote PHircQ creates answer
   ↓
-SHA-256 re-computation
+answer returned over verified local endpoint
   ↓
-bounded BlobStore
+both clients display persistent fingerprints
   ↓
-REMOTE_PEER → file.attach → Authority
+operator explicitly trusts fingerprint
   ↓
-room attachment + ledger
-  ↓
-signed success/failure receipt
+RTCDataChannel chat/files
 ```
 
-A sender cannot start moving file chunks until the receiver explicitly accepts
-the offer. A successfully transported blob is not admitted to PHircQ storage
-until its byte count and SHA-256 match the signed offer.
+Discovery and signal delivery are **not trust**. PHircQ still refuses signed
+peer traffic until the advertised cryptographic fingerprint has been explicitly
+trusted.
 
-### Limits
+### Identity storage truth
 
-Current direct peer file limit is **25 MiB per file**. The transfer uses 12 KiB
-chunks so signed JSON frames stay comfortably below common RTCDataChannel
-message-size trouble zones.
+The v0.8 signing key is persisted as exportable P-256 JWK material inside the
+app's IndexedDB/webview storage. That gives PHircQ a stable identity across
+normal launches without a cloud account.
 
-The v0.7 transfer verifies SHA-256 after bounded reassembly. True incremental
-hash-state persistence and transfer resume are still future work, rather than
-being advertised because a progress bar looked convincing. Humanity has tried
-that product-management technique enough times.
+It is **not yet an OS-backed secure enclave/keychain implementation**. Moving the
+private key behind Windows DPAPI, macOS Keychain, Linux Secret Service or another
+native keystore remains future hardening work.
+
+### Privacy
+
+Strict-local WebRTC still uses:
+
+```ts
+new RTCPeerConnection({ iceServers: [] })
+```
+
+Native LAN signaling uses the discovered PHircQ TCP endpoint. PHircQ does not
+silently contact a STUN, TURN or cloud rendezvous service in this mode.
 
 ### Native desktop
 
 ```bash
 npm install
 npm run tauri:dev
-```
-
-Web mode remains available:
-
-```bash
-npm run dev
 ```
 
 ### Verify
