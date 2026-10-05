@@ -67,8 +67,9 @@ export default function App() {
     );
   }
 
+  const activeRuntime = runtime;
   const refresh = () => setVersion((value) => value + 1);
-  const state = runtime.state;
+  const state = activeRuntime.state;
   const currentRoom =
     state.rooms.find((room) => room.id === state.currentRoomId) ??
     state.rooms[0];
@@ -85,14 +86,14 @@ export default function App() {
     event.preventDefault();
     if (!input.trim()) return;
 
-    runtime.submit(input);
+    activeRuntime.submit(input);
     setInput("");
     refresh();
   }
 
   function addRoom(event: FormEvent) {
     event.preventDefault();
-    runtime.createRoom(roomDraft);
+    activeRuntime.createRoom(roomDraft);
     setRoomDraft("");
     refresh();
   }
@@ -103,7 +104,7 @@ export default function App() {
     setNotice(`hashing ${file.name}…`);
 
     try {
-      const meta = await runtime.attachFile(file);
+      const meta = await activeRuntime.attachFile(file);
       setNotice(
         `stored ${meta.name} · sha256 ${meta.sha256.slice(0, 12)}…`
       );
@@ -121,7 +122,7 @@ export default function App() {
     const meta = attachmentById.get(attachmentId);
     if (!meta) return;
 
-    const blob = await runtime.getAttachmentBlob(attachmentId);
+    const blob = await activeRuntime.getAttachmentBlob(attachmentId);
     if (!blob) {
       setNotice("Attachment bytes are unavailable on this node.");
       return;
@@ -169,7 +170,7 @@ export default function App() {
                     : "room"
                 }
                 onClick={() => {
-                  runtime.selectRoom(room.id);
+                  activeRuntime.selectRoom(room.id);
                   refresh();
                 }}
               >
