@@ -622,10 +622,13 @@ export class PeerSession {
       return;
     }
 
-    const blob = new Blob(
-      transfer.chunks as Uint8Array[],
-      { type: transfer.offer.mimeType }
-    );
+    const parts = transfer.chunks.map((chunk) => {
+      const source = chunk!;
+      const copy = new Uint8Array(source.byteLength);
+      copy.set(source);
+      return copy.buffer;
+    });
+    const blob = new Blob(parts, { type: transfer.offer.mimeType });
     const actualHash = await sha256Hex(blob);
 
     if (actualHash !== transfer.offer.sha256) {
