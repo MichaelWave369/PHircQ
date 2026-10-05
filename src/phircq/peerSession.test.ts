@@ -75,9 +75,19 @@ describe("peer session", () => {
   it("surfaces an untrusted identity instead of delivering chat", async () => {
     const [transportA, transportB] = createMemoryTransportPair();
 
-    let request:
-      | { peerId: string; displayName: string; fingerprint: string }
-      | undefined;
+    let resolveRequest!: (value: {
+      peerId: string;
+      displayName: string;
+      fingerprint: string;
+    }) => void;
+
+    const requestPromise = new Promise<{
+      peerId: string;
+      displayName: string;
+      fingerprint: string;
+    }>((resolve) => {
+      resolveRequest = resolve;
+    });
 
     const sessionA = await PeerSession.create({
       peerId: "peer-a",
@@ -91,7 +101,7 @@ describe("peer session", () => {
       trusts: () => [],
       handlers: {
         onUntrustedPeer(value) {
-          request = value;
+          resolveRequest(value);
         }
       }
     });
@@ -103,10 +113,18 @@ describe("peer session", () => {
       text: "trust me?"
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = await Promise.race([
+      requestPromise,
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("Timed out waiting for untrusted peer callback.")),
+          1000
+        );
+      })
+    ]);
 
-    expect(request?.peerId).toBe("peer-a");
-    expect(request?.fingerprint).toBe(sessionA.identity.fingerprint);
+    expect(request.peerId).toBe("peer-a");
+    expect(request.fingerprint).toBe(sessionA.identity.fingerprint);
 
     await Promise.all([sessionA.disconnect(), sessionB.disconnect()]);
   });

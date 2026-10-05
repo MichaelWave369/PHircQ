@@ -39,13 +39,25 @@
 - [x] replay / duplicate rejection
 - [x] governed remote message admission
 - [x] real browser WebRTC strict-local self-test
-- [ ] user-facing offer / answer workflow
-- [ ] reconnect / link lifecycle UX
 
-## Rung 5 — Native + LAN
+## Rung 5 — Paper Link peer UX
+- [x] user-facing manual offer / answer workflow
+- [x] no signaling server required
+- [x] identity embedded in manual signal
+- [x] signal/public-key fingerprint consistency validation
+- [x] operator fingerprint comparison
+- [x] explicit trust before peer chat
+- [x] two-browser / two-machine room chat path
+- [x] disconnect
+- [x] trust removal
+- [x] manual reset / re-link
+- [ ] automatic reconnect
+- [ ] optional rendezvous service
+
+## Rung 6 — Native + LAN
 - [ ] Tauri desktop shell
 - [ ] mDNS / LAN discovery
-- [ ] STRICT LOCAL mode for native discovery/linking
+- [ ] STRICT LOCAL native discovery/linking
 - [ ] direct peer files
 
 ## Later

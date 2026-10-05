@@ -98,4 +98,49 @@ describe("ClientRuntime", () => {
       runtime.state.ledger.some((entry) => entry.action === "agent.complete")
     ).toBe(true);
   });
+
+  it("persists and removes explicit peer trust through governance", () => {
+    const store = new MemoryStore();
+    const first = new ClientRuntime(store);
+
+    first.trustPeer({
+      peerId: "peer-a",
+      displayName: "TestPeer",
+      fingerprint: "a".repeat(64)
+    });
+
+    const second = new ClientRuntime(store);
+    expect(second.state.peers).toHaveLength(1);
+    expect(second.state.peers[0]?.peerId).toBe("peer-a");
+
+    second.removePeer("peer-a");
+    expect(second.state.peers).toHaveLength(0);
+    expect(
+      second.state.ledger.some((entry) => entry.action === "peer.remove")
+    ).toBe(true);
+  });
+
+  it("rejects remote chat addressed to an unknown room", () => {
+    const runtime = new ClientRuntime(new MemoryStore());
+
+    runtime.trustPeer({
+      peerId: "peer-a",
+      displayName: "TestPeer",
+      fingerprint: "b".repeat(64)
+    });
+
+    expect(
+      runtime.receivePeerChat({
+        peerId: "peer-a",
+        displayName: "TestPeer",
+        roomName: "#does-not-exist",
+        text: "nope",
+        frameId: "frame-1"
+      })
+    ).toBe(false);
+
+    expect(
+      runtime.state.messages.some((message) => message.content === "nope")
+    ).toBe(false);
+  });
 });

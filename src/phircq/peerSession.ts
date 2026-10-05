@@ -51,12 +51,13 @@ export class PeerSession {
 
   static async create(options: {
     peerId: string;
+    identity?: PeerIdentity;
     transport: Transport;
     trusts: () => PeerTrust[];
     handlers?: PeerSessionHandlers;
   }): Promise<PeerSession> {
     return new PeerSession(
-      await createPeerIdentity(options.peerId),
+      options.identity ?? (await createPeerIdentity(options.peerId)),
       options.transport,
       options.trusts,
       options.handlers ?? {}
