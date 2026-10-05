@@ -10,9 +10,13 @@
 - [x] CI
 
 ## Rung 2 — Durable persistence
-- [ ] SQLite / sql.js persistence
-- [ ] attachment metadata + SHA-256
-- [ ] blob storage + migrations
+- [x] packaged SQLite via sql.js
+- [x] normalized SQLite tables for local runtime state
+- [x] migration from v0.1 browser state
+- [x] attachment metadata + SHA-256
+- [x] bounded IndexedDB blob storage
+- [x] local file attachment/download UI
+- [x] file actions governed by SEND_FILE authority
 
 ## Rung 3 — Agents
 - [ ] AgentAdapter interface

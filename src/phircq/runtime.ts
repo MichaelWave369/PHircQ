@@ -1,6 +1,16 @@
+import { createAttachmentMeta, type BlobStore } from "./attachments";
 import { ActionBus, Authority } from "./bus";
 import { parseInput } from "./commands";
-import type { Action, Actor, LedgerEntry, Message, Room, RuntimeSnapshot } from "./types";
+import { CURRENT_SCHEMA_VERSION, migrateSnapshot } from "./migrations";
+import type {
+  Action,
+  Actor,
+  AttachmentMeta,
+  LedgerEntry,
+  Message,
+  Room,
+  RuntimeSnapshot
+} from "./types";
 import type { SnapshotStore } from "./store";
 
 const uid = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
@@ -11,8 +21,9 @@ function defaultSnapshot(): RuntimeSnapshot {
     displayName: "Operator",
     type: "HUMAN",
     presence: "ONLINE",
-    capabilities: ["SEND_MESSAGE", "ROOM_WRITE"]
+    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE"]
   };
+
   const phiBot: Actor = {
     id: "actor_phibot",
     displayName: "PhiBot",
@@ -20,6 +31,7 @@ function defaultSnapshot(): RuntimeSnapshot {
     presence: "OFFLINE",
     capabilities: ["SEND_MESSAGE"]
   };
+
   const general: Room = {
     id: "room_general",
     name: "#general",
@@ -27,35 +39,48 @@ function defaultSnapshot(): RuntimeSnapshot {
     memberIds: [self.id],
     archived: false
   };
+
   return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     selfId: self.id,
     currentRoomId: general.id,
     actors: [self, phiBot],
     rooms: [general],
-    messages: [{
-      id: "msg_welcome",
-      roomId: general.id,
-      actorId: "system",
-      timestamp: new Date().toISOString(),
-      content: "PHircQ local runtime ready. Try /help.",
-      format: "system"
-    }],
-    ledger: []
+    messages: [
+      {
+        id: "msg_welcome",
+        roomId: general.id,
+        actorId: "system",
+        timestamp: new Date().toISOString(),
+        content: "PHircQ local runtime ready. Try /help.",
+        format: "system",
+        attachmentIds: []
+      }
+    ],
+    ledger: [],
+    attachments: []
   };
 }
 
 export class ClientRuntime {
   private snapshot: RuntimeSnapshot;
   private readonly bus: ActionBus;
+  private readonly blobStore?: BlobStore;
 
-  constructor(private readonly store: SnapshotStore) {
-    this.snapshot = store.load() ?? defaultSnapshot();
+  constructor(
+    private readonly store: SnapshotStore,
+    options: { blobStore?: BlobStore } = {}
+  ) {
+    this.snapshot = migrateSnapshot(store.load()) ?? defaultSnapshot();
+    this.blobStore = options.blobStore;
+
     this.bus = new ActionBus(
       () => this.snapshot.actors,
       new Authority(),
       (action) => this.handle(action),
       (action) => this.ledger(action, "DENY", "authority rejected action")
     );
+
     this.persist();
   }
 
@@ -74,30 +99,50 @@ export class ClientRuntime {
             actorId: selfId,
             type: "message.send",
             target: this.snapshot.currentRoomId,
-            payload: { text: parsed.text, format: "text" }
+            payload: {
+              text: parsed.text,
+              format: "text",
+              attachmentIds: []
+            }
           });
         }
         break;
+
       case "me":
         if (parsed.text) {
           this.bus.dispatch({
             actorId: selfId,
             type: "message.send",
             target: this.snapshot.currentRoomId,
-            payload: { text: parsed.text, format: "action" }
+            payload: {
+              text: parsed.text,
+              format: "action",
+              attachmentIds: []
+            }
           });
         }
         break;
+
       case "join":
         if (parsed.room) {
-          this.bus.dispatch({ actorId: selfId, type: "room.join", payload: { name: parsed.room } });
+          this.bus.dispatch({
+            actorId: selfId,
+            type: "room.join",
+            payload: { name: parsed.room }
+          });
         }
         break;
+
       case "nick":
         if (parsed.name) {
-          this.bus.dispatch({ actorId: selfId, type: "identity.rename", payload: { name: parsed.name } });
+          this.bus.dispatch({
+            actorId: selfId,
+            type: "identity.rename",
+            payload: { name: parsed.name }
+          });
         }
         break;
+
       case "topic":
         this.bus.dispatch({
           actorId: selfId,
@@ -106,6 +151,7 @@ export class ClientRuntime {
           payload: { text: parsed.text }
         });
         break;
+
       case "who":
         this.systemMessage(
           this.snapshot.actors
@@ -114,9 +160,13 @@ export class ClientRuntime {
             .join(", ") || "Nobody online."
         );
         break;
+
       case "help":
-        this.systemMessage("/join #room  /me action  /nick name  /who  /topic text  /help");
+        this.systemMessage(
+          "/join #room  /me action  /nick name  /who  /topic text  /help"
+        );
         break;
+
       case "unknown":
         this.systemMessage(`Unknown command: /${parsed.command}`);
         break;
@@ -125,8 +175,40 @@ export class ClientRuntime {
     this.persist();
   }
 
+  async attachFile(file: File): Promise<AttachmentMeta> {
+    if (!this.blobStore) {
+      throw new Error("Blob storage is unavailable.");
+    }
+
+    const meta = await createAttachmentMeta(file, this.snapshot.selfId);
+    await this.blobStore.put(meta.id, file);
+
+    const accepted = this.bus.dispatch({
+      actorId: this.snapshot.selfId,
+      type: "file.attach",
+      target: this.snapshot.currentRoomId,
+      payload: { meta }
+    });
+
+    if (!accepted) {
+      await this.blobStore.delete(meta.id);
+      throw new Error("Attachment was denied by authority.");
+    }
+
+    this.persist();
+    return meta;
+  }
+
+  async getAttachmentBlob(id: string): Promise<Blob | null> {
+    return this.blobStore?.get(id) ?? null;
+  }
+
   selectRoom(roomId: string): void {
-    if (this.snapshot.rooms.some((room) => room.id === roomId && !room.archived)) {
+    if (
+      this.snapshot.rooms.some(
+        (room) => room.id === roomId && !room.archived
+      )
+    ) {
       this.snapshot.currentRoomId = roomId;
       this.persist();
     }
@@ -135,27 +217,62 @@ export class ClientRuntime {
   createRoom(name: string): void {
     const trimmed = name.trim();
     if (!trimmed) return;
+
     const normalized = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+
     this.bus.dispatch({
       actorId: this.snapshot.selfId,
       type: "room.join",
       payload: { name: normalized }
     });
+
     this.persist();
   }
 
   private handle(action: Action): void {
     if (action.type === "message.send") {
-      const payload = action.payload as { text: string; format: "text" | "action" };
+      const payload = action.payload as {
+        text: string;
+        format: "text" | "action";
+        attachmentIds?: string[];
+      };
+
       this.snapshot.messages.push({
         id: uid("msg"),
         roomId: action.target!,
         actorId: action.actorId,
         timestamp: new Date().toISOString(),
         content: payload.text,
-        format: payload.format
+        format: payload.format,
+        attachmentIds: payload.attachmentIds ?? []
       });
+
       this.ledger(action, "ALLOW");
+      return;
+    }
+
+    if (action.type === "file.attach") {
+      const { meta } = action.payload as { meta: AttachmentMeta };
+
+      if (!this.snapshot.attachments.some((item) => item.id === meta.id)) {
+        this.snapshot.attachments.push(meta);
+      }
+
+      this.snapshot.messages.push({
+        id: uid("msg"),
+        roomId: action.target!,
+        actorId: action.actorId,
+        timestamp: new Date().toISOString(),
+        content: `shared ${meta.name}`,
+        format: "text",
+        attachmentIds: [meta.id]
+      });
+
+      this.ledger(
+        action,
+        "ALLOW",
+        `${meta.name} ${meta.size} bytes sha256:${meta.sha256}`
+      );
       return;
     }
 
@@ -184,15 +301,27 @@ export class ClientRuntime {
     }
 
     if (action.type === "room.topic") {
-      const room = this.snapshot.rooms.find((candidate) => candidate.id === action.target);
-      if (room) room.topic = (action.payload as { text: string }).text;
+      const room = this.snapshot.rooms.find(
+        (candidate) => candidate.id === action.target
+      );
+
+      if (room) {
+        room.topic = (action.payload as { text: string }).text;
+      }
+
       this.ledger(action, "ALLOW");
       return;
     }
 
     if (action.type === "identity.rename") {
-      const actor = this.snapshot.actors.find((candidate) => candidate.id === action.actorId);
-      if (actor) actor.displayName = (action.payload as { name: string }).name;
+      const actor = this.snapshot.actors.find(
+        (candidate) => candidate.id === action.actorId
+      );
+
+      if (actor) {
+        actor.displayName = (action.payload as { name: string }).name;
+      }
+
       this.ledger(action, "ALLOW");
     }
   }
@@ -211,6 +340,7 @@ export class ClientRuntime {
       result,
       detail
     };
+
     this.snapshot.ledger.push(entry);
   }
 
@@ -221,8 +351,10 @@ export class ClientRuntime {
       actorId: "system",
       timestamp: new Date().toISOString(),
       content,
-      format: "system"
+      format: "system",
+      attachmentIds: []
     };
+
     this.snapshot.messages.push(message);
   }
 

@@ -17,6 +17,16 @@ export interface Room {
   archived: boolean;
 }
 
+export interface AttachmentMeta {
+  id: string;
+  actorId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  createdAt: string;
+}
+
 export interface Message {
   id: string;
   roomId: string;
@@ -24,6 +34,7 @@ export interface Message {
   timestamp: string;
   content: string;
   format: "text" | "action" | "system";
+  attachmentIds: string[];
 }
 
 export interface LedgerEntry {
@@ -37,12 +48,14 @@ export interface LedgerEntry {
 }
 
 export interface RuntimeSnapshot {
+  schemaVersion: number;
   selfId: string;
   currentRoomId: string;
   actors: Actor[];
   rooms: Room[];
   messages: Message[];
   ledger: LedgerEntry[];
+  attachments: AttachmentMeta[];
 }
 
 export interface Action {
