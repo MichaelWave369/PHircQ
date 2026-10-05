@@ -128,4 +128,104 @@ describe("peer session", () => {
 
     await Promise.all([sessionA.disconnect(), sessionB.disconnect()]);
   });
+
+  it("requires explicit acceptance before moving chunked peer file bytes", async () => {
+    const runtimeA = new ClientRuntime(new MemoryStore());
+    const runtimeB = new ClientRuntime(new MemoryStore());
+    const [transportA, transportB] = createMemoryTransportPair();
+
+    let sessionB!: PeerSession;
+    let resolveReceived!: (value: { blob: Blob; sha256: string; name: string }) => void;
+    const received = new Promise<{ blob: Blob; sha256: string; name: string }>((resolve) => {
+      resolveReceived = resolve;
+    });
+
+    let resolveSent!: () => void;
+    const sent = new Promise<void>((resolve) => {
+      resolveSent = resolve;
+    });
+
+    const sessionA = await PeerSession.create({
+      peerId: "peer-a",
+      transport: transportA,
+      trusts: () => runtimeA.state.peers,
+      handlers: {
+        onFileStatus(status) {
+          if (status.status === "sent") resolveSent();
+        }
+      }
+    });
+
+    sessionB = await PeerSession.create({
+      peerId: "peer-b",
+      transport: transportB,
+      trusts: () => runtimeB.state.peers,
+      handlers: {
+        onFileOffer(offer) {
+          void sessionB.acceptFile(offer.offer.transferId);
+        },
+        onFileReceived(file) {
+          resolveReceived({
+            blob: file.blob,
+            sha256: file.sha256,
+            name: file.name
+          });
+        }
+      }
+    });
+
+    runtimeA.trustPeer({
+      peerId: "peer-b",
+      displayName: "TestPeer",
+      fingerprint: sessionB.identity.fingerprint
+    });
+    runtimeB.trustPeer({
+      peerId: "peer-a",
+      displayName: "Mikey",
+      fingerprint: sessionA.identity.fingerprint
+    });
+
+    await Promise.all([sessionA.connect(), sessionB.connect()]);
+
+    const source = new Blob(
+      ["PHircQ direct peer file transfer ".repeat(900)],
+      { type: "text/plain" }
+    );
+
+    const offer = await sessionA.offerFile({
+      file: source,
+      name: "peer-note.txt",
+      roomName: "#general",
+      displayName: "Mikey"
+    });
+
+    expect(offer.totalChunks).toBeGreaterThan(1);
+
+    const result = await Promise.race([
+      received,
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("Timed out waiting for peer file transfer.")),
+          2000
+        );
+      })
+    ]);
+
+    await Promise.race([
+      sent,
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error("Timed out waiting for file receipt.")),
+          2000
+        );
+      })
+    ]);
+
+    expect(result.name).toBe("peer-note.txt");
+    expect(result.sha256).toBe(offer.sha256);
+    expect(result.blob.size).toBe(source.size);
+    expect(await result.blob.text()).toBe(await source.text());
+
+    await Promise.all([sessionA.disconnect(), sessionB.disconnect()]);
+  });
 });
