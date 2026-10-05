@@ -1,10 +1,12 @@
 import { createAttachmentMeta, type BlobStore } from "./attachments";
+import { AgentRegistry, discoverOllama, type OllamaModel } from "./agents";
 import { ActionBus, Authority } from "./bus";
 import { parseInput } from "./commands";
 import { CURRENT_SCHEMA_VERSION, migrateSnapshot } from "./migrations";
 import type {
   Action,
   Actor,
+  AgentDefinition,
   AttachmentMeta,
   LedgerEntry,
   Message,
@@ -21,7 +23,7 @@ function defaultSnapshot(): RuntimeSnapshot {
     displayName: "Operator",
     type: "HUMAN",
     presence: "ONLINE",
-    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE"]
+    capabilities: ["SEND_MESSAGE", "ROOM_WRITE", "SEND_FILE", "INVOKE_AGENT"]
   };
 
   const phiBot: Actor = {
@@ -58,7 +60,8 @@ function defaultSnapshot(): RuntimeSnapshot {
       }
     ],
     ledger: [],
-    attachments: []
+    attachments: [],
+    agents: []
   };
 }
 
@@ -66,13 +69,23 @@ export class ClientRuntime {
   private snapshot: RuntimeSnapshot;
   private readonly bus: ActionBus;
   private readonly blobStore?: BlobStore;
+  private readonly agentRegistry: AgentRegistry;
 
   constructor(
     private readonly store: SnapshotStore,
-    options: { blobStore?: BlobStore } = {}
+    options: {
+      blobStore?: BlobStore;
+      agentRegistry?: AgentRegistry;
+    } = {}
   ) {
     this.snapshot = migrateSnapshot(store.load()) ?? defaultSnapshot();
     this.blobStore = options.blobStore;
+    this.agentRegistry = options.agentRegistry ?? new AgentRegistry();
+
+    const self = this.snapshot.actors.find((actor) => actor.id === this.snapshot.selfId);
+    if (self && !self.capabilities.includes("INVOKE_AGENT")) {
+      self.capabilities.push("INVOKE_AGENT");
+    }
 
     this.bus = new ActionBus(
       () => this.snapshot.actors,
@@ -203,6 +216,157 @@ export class ClientRuntime {
     return this.blobStore?.get(id) ?? null;
   }
 
+  async discoverOllamaModels(endpoint: string): Promise<OllamaModel[]> {
+    return discoverOllama(endpoint);
+  }
+
+  createOllamaAgent(input: {
+    name: string;
+    model: string;
+    endpoint: string;
+    capabilities?: string[];
+  }): AgentDefinition {
+    const name = input.name.trim();
+    const model = input.model.trim();
+    const endpoint = input.endpoint.trim();
+
+    if (!name) throw new Error("Agent name is required.");
+    if (!model) throw new Error("Ollama model is required.");
+    if (!endpoint) throw new Error("Ollama endpoint is required.");
+
+    const actorId = uid("actor_agent");
+    const definition: AgentDefinition = {
+      id: uid("agent"),
+      actorId,
+      name,
+      provider: "ollama",
+      model,
+      endpoint,
+      capabilities: input.capabilities ?? ["SEND_MESSAGE"],
+      enabled: true
+    };
+
+    this.snapshot.agents.push(definition);
+    this.snapshot.actors.push({
+      id: actorId,
+      displayName: name,
+      type: "AGENT",
+      presence: "AGENT_IDLE",
+      capabilities: [...definition.capabilities]
+    });
+
+    const room = this.snapshot.rooms.find((item) => item.id === this.snapshot.currentRoomId);
+    if (room && !room.memberIds.includes(actorId)) room.memberIds.push(actorId);
+
+    this.ledger(
+      {
+        actorId: this.snapshot.selfId,
+        type: "agent.create",
+        target: definition.id
+      },
+      "ALLOW",
+      `${name} / ${model} / ollama`
+    );
+
+    this.persist();
+    return structuredClone(definition);
+  }
+
+  setAgentEnabled(agentId: string, enabled: boolean): void {
+    const definition = this.snapshot.agents.find((agent) => agent.id === agentId);
+    if (!definition) throw new Error("Agent not found.");
+
+    definition.enabled = enabled;
+    const actor = this.snapshot.actors.find((item) => item.id === definition.actorId);
+    if (actor) actor.presence = enabled ? "AGENT_IDLE" : "OFFLINE";
+
+    this.ledger(
+      {
+        actorId: this.snapshot.selfId,
+        type: "agent.configure",
+        target: agentId
+      },
+      "ALLOW",
+      enabled ? "enabled" : "disabled"
+    );
+    this.persist();
+  }
+
+  async invokeAgent(agentId: string, prompt: string): Promise<string> {
+    const definition = this.snapshot.agents.find((agent) => agent.id === agentId);
+    if (!definition) throw new Error("Agent not found.");
+    if (!definition.enabled) throw new Error("Agent is disabled.");
+    if (!prompt.trim()) throw new Error("Prompt is required.");
+
+    const allowed = this.bus.dispatch({
+      actorId: this.snapshot.selfId,
+      type: "agent.invoke",
+      target: agentId,
+      payload: { prompt }
+    });
+
+    if (!allowed) throw new Error("Agent invocation denied by authority.");
+
+    const actor = this.snapshot.actors.find((item) => item.id === definition.actorId);
+    if (!actor) throw new Error("Agent actor is missing.");
+
+    actor.presence = "AGENT_WORKING";
+    this.persist();
+
+    const room = this.snapshot.rooms.find((item) => item.id === this.snapshot.currentRoomId);
+    const recentMessages = this.snapshot.messages
+      .filter((message) => message.roomId === this.snapshot.currentRoomId)
+      .slice(-12);
+
+    try {
+      const adapter = this.agentRegistry.adapterFor(definition);
+      const response = await adapter.generate(definition, {
+        prompt,
+        roomName: room?.name ?? "#unknown",
+        recentMessages
+      });
+
+      const sent = this.bus.dispatch({
+        actorId: definition.actorId,
+        type: "message.send",
+        target: this.snapshot.currentRoomId,
+        payload: {
+          text: response,
+          format: "text",
+          attachmentIds: []
+        }
+      });
+
+      if (!sent) throw new Error("Agent response denied by authority.");
+
+      actor.presence = "AGENT_IDLE";
+      this.ledger(
+        {
+          actorId: this.snapshot.selfId,
+          type: "agent.complete",
+          target: agentId
+        },
+        "ALLOW",
+        definition.model
+      );
+      this.persist();
+      return response;
+    } catch (error) {
+      actor.presence = "AGENT_IDLE";
+      this.ledger(
+        {
+          actorId: this.snapshot.selfId,
+          type: "agent.fail",
+          target: agentId
+        },
+        "DENY",
+        error instanceof Error ? error.message : "agent invocation failed"
+      );
+      this.persist();
+      throw error;
+    }
+  }
+
   selectRoom(roomId: string): void {
     if (
       this.snapshot.rooms.some(
@@ -273,6 +437,11 @@ export class ClientRuntime {
         "ALLOW",
         `${meta.name} ${meta.size} bytes sha256:${meta.sha256}`
       );
+      return;
+    }
+
+    if (action.type === "agent.invoke") {
+      this.ledger(action, "ALLOW");
       return;
     }
 
