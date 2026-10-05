@@ -47,3 +47,31 @@ This split is intentional:
 
 A later Tauri rung can replace the browser backing stores with native file-based
 SQLite and filesystem blobs without changing the runtime contract.
+
+## Agent boundary
+
+Agents are ordinary PHircQ Actors plus a persisted AgentDefinition. Providers
+implement the AgentAdapter contract. The first provider is Ollama, but provider
+logic is kept outside React and outside the core message model.
+
+Agent lifecycle is governed:
+
+```text
+Operator
+  ↓ MANAGE_AGENT / INVOKE_AGENT
+Action Bus
+  ↓
+Authority
+  ↓
+AgentAdapter
+  ↓
+provider response
+  ↓ SEND_MESSAGE as agent Actor
+Action Bus
+  ↓
+Room + Ledger
+```
+
+A local model therefore does not receive filesystem, shell, camera, microphone,
+network-peer or script authority merely because it can generate text. Those
+capabilities must be introduced separately and explicitly.

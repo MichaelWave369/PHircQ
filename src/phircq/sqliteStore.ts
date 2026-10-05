@@ -103,6 +103,16 @@ export class SqliteSnapshotStore implements SnapshotStore {
     const currentRoomId = settingMap.get("currentRoomId");
     if (!selfId || !currentRoomId) return null;
 
+    let agents: RuntimeSnapshot["agents"] = [];
+    const agentsJson = settingMap.get("agentsJson");
+    if (agentsJson) {
+      try {
+        agents = JSON.parse(agentsJson) as RuntimeSnapshot["agents"];
+      } catch {
+        agents = [];
+      }
+    }
+
     const actors = rows<{
       id: string;
       display_name: string;
@@ -230,7 +240,8 @@ export class SqliteSnapshotStore implements SnapshotStore {
       rooms,
       messages,
       ledger,
-      attachments
+      attachments,
+      agents
     });
   }
 
@@ -256,6 +267,8 @@ export class SqliteSnapshotStore implements SnapshotStore {
       const setting = this.db.prepare("INSERT INTO settings(key, value) VALUES (?, ?)");
       setting.run(["selfId", normalized.selfId]);
       setting.run(["currentRoomId", normalized.currentRoomId]);
+      setting.run(["schemaVersion", String(normalized.schemaVersion)]);
+      setting.run(["agentsJson", JSON.stringify(normalized.agents)]);
       setting.free();
 
       const actor = this.db.prepare(
@@ -410,7 +423,7 @@ export class SqliteSnapshotStore implements SnapshotStore {
         detail TEXT,
         ordinal INTEGER NOT NULL
       );
-      PRAGMA user_version = 1;
+      PRAGMA user_version = 2;
     `);
     this.persistBytes();
   }

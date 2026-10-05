@@ -9,7 +9,7 @@ import { ClientRuntime } from "./phircq/runtime";
 import { SqliteSnapshotStore } from "./phircq/sqliteStore";
 import { LocalStorageStore } from "./phircq/store";
 
-type SideTab = "people" | "ledger";
+type SideTab = "people" | "ledger" | "agents";
 type PersistenceMode = "BOOTING" | "SQLITE" | "FALLBACK";
 
 export default function App() {
@@ -20,6 +20,13 @@ export default function App() {
   const [roomDraft, setRoomDraft] = useState("");
   const [sideTab, setSideTab] = useState<SideTab>("people");
   const [notice, setNotice] = useState("");
+  const [ollamaEndpoint, setOllamaEndpoint] = useState("http://localhost:11434");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [agentName, setAgentName] = useState("LocalAgent");
+  const [agentModel, setAgentModel] = useState("");
+  const [agentPrompt, setAgentPrompt] = useState("");
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [agentBusy, setAgentBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -81,6 +88,9 @@ export default function App() {
     state.attachments.map((attachment) => [attachment.id, attachment])
   );
   const self = actorById.get(state.selfId)!;
+  const selectedAgent =
+    state.agents.find((agent) => agent.id === selectedAgentId) ??
+    state.agents[0];
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -136,6 +146,92 @@ export default function App() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  async function scanOllama() {
+    setAgentBusy(true);
+    setNotice(`checking ${ollamaEndpoint}…`);
+
+    try {
+      const models = await activeRuntime.discoverOllamaModels(ollamaEndpoint);
+      const names = models.map((model) => model.name);
+      setOllamaModels(names);
+      if (!agentModel && names[0]) setAgentModel(names[0]);
+      setNotice(
+        names.length
+          ? `Ollama ready · ${names.length} model${names.length === 1 ? "" : "s"} found`
+          : "Ollama replied, but no local models were found."
+      );
+    } catch (error) {
+      setOllamaModels([]);
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Unable to discover Ollama."
+      );
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  function createAgent() {
+    try {
+      const created = activeRuntime.createOllamaAgent({
+        name: agentName,
+        model: agentModel,
+        endpoint: ollamaEndpoint,
+        capabilities: ["SEND_MESSAGE"]
+      });
+      setSelectedAgentId(created.id);
+      setSideTab("agents");
+      setNotice(
+        `${created.name} joined ${currentRoom?.name ?? "the current room"} as a governed agent.`
+      );
+      refresh();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Unable to create agent."
+      );
+    }
+  }
+
+  async function invokeAgent() {
+    if (!selectedAgent) {
+      setNotice("Create or select an agent first.");
+      return;
+    }
+    if (!agentPrompt.trim()) {
+      setNotice("Give the agent something to respond to.");
+      return;
+    }
+
+    setAgentBusy(true);
+    setNotice(`invoking ${selectedAgent.name}…`);
+
+    try {
+      await activeRuntime.invokeAgent(selectedAgent.id, agentPrompt);
+      setAgentPrompt("");
+      setNotice(`${selectedAgent.name} responded in ${currentRoom?.name ?? "the room"}.`);
+      refresh();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Agent invocation failed."
+      );
+      refresh();
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  function toggleAgent(agentId: string, enabled: boolean) {
+    try {
+      activeRuntime.setAgentEnabled(agentId, enabled);
+      refresh();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Unable to update agent."
+      );
+    }
+  }
+
   return (
     <main className="shell">
       <header className="topbar">
@@ -152,7 +248,7 @@ export default function App() {
       <nav className="primary-tabs">
         <button className="active">Rooms</button>
         <button>Talk</button>
-        <button>People</button>
+        <button onClick={() => setSideTab("agents")}>Agents</button>
       </nav>
 
       <section className="workspace">
@@ -282,7 +378,7 @@ export default function App() {
         </section>
 
         <aside className="people pane">
-          <div className="side-tabs">
+          <div className="side-tabs three">
             <button
               className={sideTab === "people" ? "active" : ""}
               onClick={() => setSideTab("people")}
@@ -295,9 +391,15 @@ export default function App() {
             >
               Ledger
             </button>
+            <button
+              className={sideTab === "agents" ? "active" : ""}
+              onClick={() => setSideTab("agents")}
+            >
+              Agents
+            </button>
           </div>
 
-          {sideTab === "people" ? (
+          {sideTab === "people" && (
             <div>
               <div className="pane-title">IN THIS NODE</div>
               {state.actors.map((actor) => (
@@ -312,7 +414,9 @@ export default function App() {
                 </div>
               ))}
             </div>
-          ) : (
+          )}
+
+          {sideTab === "ledger" && (
             <div className="ledger">
               {state.ledger
                 .slice()
@@ -325,6 +429,106 @@ export default function App() {
                 ))}
             </div>
           )}
+
+          {sideTab === "agents" && (
+            <div className="agent-panel">
+              <div className="pane-title">OLLAMA</div>
+              <label>
+                endpoint
+                <input
+                  value={ollamaEndpoint}
+                  onChange={(event) => setOllamaEndpoint(event.target.value)}
+                />
+              </label>
+              <button disabled={agentBusy} onClick={() => void scanOllama()}>
+                Discover
+              </button>
+
+              <label>
+                model
+                <select
+                  value={agentModel}
+                  onChange={(event) => setAgentModel(event.target.value)}
+                >
+                  <option value="">select model</option>
+                  {ollamaModels.map((model) => (
+                    <option value={model} key={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                name
+                <input
+                  value={agentName}
+                  onChange={(event) => setAgentName(event.target.value)}
+                />
+              </label>
+
+              <button disabled={!agentModel} onClick={createAgent}>
+                Create local agent
+              </button>
+
+              <div className="pane-title">AGENTS</div>
+              {state.agents.length === 0 && (
+                <p className="muted">No configured agents yet.</p>
+              )}
+
+              {state.agents.map((agent) => {
+                const actor = actorById.get(agent.actorId);
+                return (
+                  <button
+                    key={agent.id}
+                    className={
+                      selectedAgent?.id === agent.id
+                        ? "agent-row selected"
+                        : "agent-row"
+                    }
+                    onClick={() => setSelectedAgentId(agent.id)}
+                  >
+                    <span>{agent.name}</span>
+                    <small>{agent.model}</small>
+                    <small>{actor?.presence ?? "OFFLINE"}</small>
+                  </button>
+                );
+              })}
+
+              {selectedAgent && (
+                <div className="agent-console">
+                  <div className="agent-meta">
+                    <strong>{selectedAgent.name}</strong>
+                    <code>{selectedAgent.model}</code>
+                    <span>
+                      caps: {selectedAgent.capabilities.join(", ") || "none"}
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      toggleAgent(selectedAgent.id, !selectedAgent.enabled)
+                    }
+                  >
+                    {selectedAgent.enabled ? "Disable" : "Enable"}
+                  </button>
+
+                  <textarea
+                    rows={5}
+                    value={agentPrompt}
+                    onChange={(event) => setAgentPrompt(event.target.value)}
+                    placeholder="ask this agent in the current room…"
+                  />
+                  <button
+                    disabled={agentBusy || !selectedAgent.enabled}
+                    onClick={() => void invokeAgent()}
+                  >
+                    Invoke in {currentRoom?.name ?? "room"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </aside>
       </section>
 
@@ -332,10 +536,7 @@ export default function App() {
         <span>LOCAL</span>
         <span>db {persistence}</span>
         <span>peers 0</span>
-        <span>
-          agents{" "}
-          {state.actors.filter((actor) => actor.type === "AGENT").length}
-        </span>
+        <span>agents {state.agents.length}</span>
         <span>files {state.attachments.length}</span>
         <span>voice PLANNED</span>
         <span>plaintext</span>

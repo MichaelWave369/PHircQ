@@ -9,34 +9,35 @@ media and governed automation.
 Actor → Intent → Action Bus → Authority → Runtime → Event → Ledger → Transport
 ```
 
-## v0.2 persistence rung
+## v0.3 agents rung
 
 ### Working
 
-- local identity
-- rooms and text chat
-- `/join`, `/me`, `/nick`, `/who`, `/topic`, `/help`
+- local identity, rooms and text chat
+- IRC-style commands
 - capability-gated Action Bus
 - inspectable activity ledger
 - packaged `sql.js` SQLite persistence
-- migration from the v0.1 browser snapshot
-- local file attachments
-- SHA-256 attachment receipts
-- 25 MiB per-file attachment limit
-- 100 MiB bounded browser blob store
-- attachment bytes stored in IndexedDB
-- attachment metadata stored in SQLite
-- local attachment download
+- local governed file attachments with SHA-256 receipts
+- generic `AgentAdapter` boundary
+- Ollama discovery through `/api/tags`
+- configurable local Ollama endpoint
+- local agent creation and enable/disable state
+- explicit `MANAGE_AGENT` and `INVOKE_AGENT` capabilities
+- agent responses posted through the same governed message path as humans
+- persisted agent definitions
+- room-context prompts using recent local messages
 - retro desktop-style React UI
-- automated tests and build CI
+- automated tests and CI
 
-The browser build packages the SQLite WASM asset locally. It does not fetch the
-database engine from a CDN.
+Ollama defaults to `http://localhost:11434`. Browser access may require the
+local Ollama server to permit the PHircQ origin. PHircQ does not silently route
+failed local requests to a cloud provider.
 
 ### Planned
 
-Agents, Ollama, WebRTC, voice/video, LAN discovery, synchronized media,
-plugins and federation are not claimed as working yet.
+WebRTC, voice/video, LAN discovery, synchronized media, plugins and federation
+are not claimed as working yet.
 
 ## Run
 

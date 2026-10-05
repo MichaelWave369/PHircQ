@@ -1,5 +1,6 @@
 export type ActorType = "HUMAN" | "AGENT" | "BOT" | "SERVICE" | "SYSTEM" | "REMOTE_PEER";
 export type Presence = "ONLINE" | "AWAY" | "BUSY" | "OFFLINE" | "INVISIBLE" | "AGENT_IDLE" | "AGENT_WORKING";
+export type AgentProvider = "ollama";
 
 export interface Actor {
   id: string;
@@ -47,6 +48,17 @@ export interface LedgerEntry {
   detail?: string;
 }
 
+export interface AgentDefinition {
+  id: string;
+  actorId: string;
+  name: string;
+  provider: AgentProvider;
+  model: string;
+  endpoint: string;
+  capabilities: string[];
+  enabled: boolean;
+}
+
 export interface RuntimeSnapshot {
   schemaVersion: number;
   selfId: string;
@@ -56,6 +68,7 @@ export interface RuntimeSnapshot {
   messages: Message[];
   ledger: LedgerEntry[];
   attachments: AttachmentMeta[];
+  agents: AgentDefinition[];
 }
 
 export interface Action {

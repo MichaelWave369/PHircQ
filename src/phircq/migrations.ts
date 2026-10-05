@@ -1,6 +1,6 @@
 import type { RuntimeSnapshot } from "./types";
 
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 type LegacySnapshot = Partial<RuntimeSnapshot> & {
   schemaVersion?: number;
@@ -32,6 +32,13 @@ export function migrateSnapshot(input: LegacySnapshot | null | undefined): Runti
         }))
       : [],
     ledger: Array.isArray(input.ledger) ? input.ledger : [],
-    attachments: Array.isArray(input.attachments) ? input.attachments : []
+    attachments: Array.isArray(input.attachments) ? input.attachments : [],
+    agents: Array.isArray(input.agents)
+      ? input.agents.map((agent) => ({
+          ...agent,
+          capabilities: Array.isArray(agent.capabilities) ? agent.capabilities : [],
+          enabled: agent.enabled !== false
+        }))
+      : []
   };
 }
