@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { LanDiscoveryPanel } from "./LanDiscoveryPanel";
 import {
   PaperLinkEndpoint,
   encodePaperSignal,
@@ -368,6 +369,11 @@ export function NetworkPanel({
           ))
         )}
       </div>
+
+      <LanDiscoveryPanel
+        localDisplayName={localDisplayName}
+        onNotice={onNotice}
+      />
 
       <div className="pane-title">PAPER LINK</div>
 
