@@ -165,7 +165,8 @@ export class PaperLinkEndpoint {
   ) {}
 
   static async createOffer(input: {
-    peerId: string;
+    peerId?: string;
+    identity?: PeerIdentity;
     displayName: string;
   }): Promise<PaperLinkEndpoint> {
     if (typeof RTCPeerConnection === "undefined") {
@@ -173,7 +174,11 @@ export class PaperLinkEndpoint {
     }
 
     const sessionId = crypto.randomUUID();
-    const identity = await createPeerIdentity(input.peerId);
+    const identity =
+      input.identity ??
+      (await createPeerIdentity(
+        input.peerId ?? `peer-${crypto.randomUUID()}`
+      ));
     const peer = new RTCPeerConnection({ iceServers: [] });
     const channel = peer.createDataChannel("phircq", { ordered: true });
 
@@ -202,7 +207,8 @@ export class PaperLinkEndpoint {
   static async acceptOffer(
     encodedOffer: string,
     input: {
-      peerId: string;
+      peerId?: string;
+      identity?: PeerIdentity;
       displayName: string;
     }
   ): Promise<PaperLinkEndpoint> {
@@ -211,7 +217,11 @@ export class PaperLinkEndpoint {
     }
 
     const offer = await decodePaperSignal(encodedOffer, "offer");
-    const identity = await createPeerIdentity(input.peerId);
+    const identity =
+      input.identity ??
+      (await createPeerIdentity(
+        input.peerId ?? `peer-${crypto.randomUUID()}`
+      ));
     const peer = new RTCPeerConnection({ iceServers: [] });
     const channelPromise = waitForDataChannel(peer);
 

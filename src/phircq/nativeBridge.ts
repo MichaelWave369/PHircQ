@@ -24,6 +24,24 @@ export interface LanProbeResult {
   detail: string;
 }
 
+export type LanSignalKind = "offer" | "answer";
+
+export interface LanSignalEnvelope {
+  schema: "phircq.lan-link.v1";
+  kind: LanSignalKind;
+  fromPeerId: string;
+  toPeerId: string;
+  signal: string;
+}
+
+export interface LanSignalSendResult {
+  peerId: string;
+  address: string | null;
+  port: number;
+  delivered: boolean;
+  detail: string;
+}
+
 export function isTauriRuntime(): boolean {
   if (typeof window === "undefined") return false;
   return "__TAURI_INTERNALS__" in (window as unknown as Record<string, unknown>);
@@ -45,8 +63,11 @@ export function nativeInfo(): Promise<NativeInfo> {
   return invokeNative<NativeInfo>("native_info");
 }
 
-export function startLanDiscovery(displayName: string): Promise<NativeInfo> {
-  return invokeNative<NativeInfo>("lan_start", { displayName });
+export function startLanDiscovery(
+  displayName: string,
+  peerId: string
+): Promise<NativeInfo> {
+  return invokeNative<NativeInfo>("lan_start", { displayName, peerId });
 }
 
 export function stopLanDiscovery(): Promise<NativeInfo> {
@@ -59,4 +80,20 @@ export function lanSnapshot(): Promise<LanPeer[]> {
 
 export function probeLanPeer(peerId: string): Promise<LanProbeResult> {
   return invokeNative<LanProbeResult>("lan_probe", { peerId });
+}
+
+export function sendLanSignal(
+  peerId: string,
+  kind: LanSignalKind,
+  signal: string
+): Promise<LanSignalSendResult> {
+  return invokeNative<LanSignalSendResult>("lan_send_signal", {
+    peerId,
+    kind,
+    signal
+  });
+}
+
+export function takeLanSignals(): Promise<LanSignalEnvelope[]> {
+  return invokeNative<LanSignalEnvelope[]>("lan_take_signals");
 }

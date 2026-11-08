@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getPersistentPeerIdentity } from "../phircq/identityStore";
 import {
   isTauriRuntime,
   lanSnapshot,
@@ -14,11 +15,13 @@ import {
 export interface LanDiscoveryPanelProps {
   localDisplayName: string;
   onNotice: (message: string) => void;
+  onLinkPeer?: (peer: LanPeer) => void;
 }
 
 export function LanDiscoveryPanel({
   localDisplayName,
-  onNotice
+  onNotice,
+  onLinkPeer
 }: LanDiscoveryPanelProps) {
   const native = isTauriRuntime();
   const [info, setInfo] = useState<NativeInfo | null>(null);
@@ -81,12 +84,17 @@ export function LanDiscoveryPanel({
 
   async function start() {
     setBusy(true);
+
     try {
-      const next = await startLanDiscovery(localDisplayName);
+      const identity = await getPersistentPeerIdentity();
+      const next = await startLanDiscovery(
+        localDisplayName,
+        identity.peerId
+      );
       setInfo(next);
       setPeers(await lanSnapshot());
       onNotice(
-        "Native mDNS discovery started. Discovered devices remain untrusted until explicitly linked."
+        "Native mDNS discovery started with the persistent PHircQ peer id. Discovered devices remain untrusted until fingerprint approval."
       );
     } catch (error) {
       onNotice(
@@ -101,6 +109,7 @@ export function LanDiscoveryPanel({
 
   async function stop() {
     setBusy(true);
+
     try {
       const next = await stopLanDiscovery();
       setInfo(next);
@@ -120,6 +129,7 @@ export function LanDiscoveryPanel({
 
   async function probe(peer: LanPeer) {
     setBusy(true);
+
     try {
       const result = await probeLanPeer(peer.peerId);
       setProbes((current) => ({
@@ -169,6 +179,10 @@ export function LanDiscoveryPanel({
         <strong>{info?.serviceType ?? "_phircq._tcp.local."}</strong>
       </div>
       <div className="network-fact">
+        <span>signal handoff</span>
+        <strong>{info?.running ? "READY" : "OFF"}</strong>
+      </div>
+      <div className="network-fact">
         <span>probe port</span>
         <strong>{info?.probePort ?? "OFF"}</strong>
       </div>
@@ -183,8 +197,9 @@ export function LanDiscoveryPanel({
       </div>
 
       <p className="muted">
-        Discovery only identifies nearby PHircQ desktop nodes. It does not
-        auto-trust them and it does not bypass Paper Link fingerprints.
+        Discovery finds nearby nodes and can carry Paper Link offer/answer
+        signals over the verified local probe endpoint. It still does not grant
+        trust. Fingerprint approval remains explicit.
       </p>
 
       {peers.length === 0 ? (
@@ -206,9 +221,17 @@ export function LanDiscoveryPanel({
               </span>
               <small>PHircQ {peer.version || "unknown"}</small>
 
-              <button disabled={busy} onClick={() => void probe(peer)}>
-                Probe reachability
-              </button>
+              <div className="paper-actions">
+                <button disabled={busy} onClick={() => void probe(peer)}>
+                  Probe
+                </button>
+                <button
+                  disabled={busy || !info?.running || !onLinkPeer}
+                  onClick={() => onLinkPeer?.(peer)}
+                >
+                  Secure LAN link
+                </button>
+              </div>
 
               {result && (
                 <small className={result.reachable ? "probe-ok" : "probe-fail"}>
