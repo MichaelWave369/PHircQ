@@ -31,7 +31,7 @@ async function verifiedPayload() {
 
 describe("Agentora loopback bridge", () => {
   it("submits original signed frame, never unsigned agent text", async () => {
-    const fake = vi.fn(async (_url, init) => {
+    const fake = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const request = init as RequestInit;
       expect(request.method).toBe("POST");
       expect(request.credentials).toBe("omit");
