@@ -88,7 +88,7 @@ describe("Agentora loopback bridge", () => {
   });
 
   it("reads token-protected, nonexecuting inbox status", async () => {
-    const fake = vi.fn(async () => new Response(JSON.stringify({
+    const fake = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       schema: "agentora.agent-exchange.inbox.v1",
       recipient: "agent:overstrings",
       messages: [{
