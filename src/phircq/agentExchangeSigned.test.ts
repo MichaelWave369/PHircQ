@@ -22,11 +22,10 @@ describe("signed agent exchange bridge", () => {
     const [a, b] = createMemoryTransportPair();
     const identityA = await createPeerIdentity("peer-a");
     const identityB = await createPeerIdentity("peer-b");
+    let deliver!: (value: { peerId: string; kind: string }) => void;
     const inbox = new Promise<{ peerId: string; kind: string }>((resolve) => {
-      // resolved by the receiver below
       deliver = resolve;
     });
-    let deliver!: (value: { peerId: string; kind: string }) => void;
     const left = await PeerSession.create({
       peerId: "peer-a", identity: identityA, transport: a,
       trusts: () => [{ peerId: "peer-b", displayName: "B", fingerprint: identityB.fingerprint, trustedAt: "" }],
