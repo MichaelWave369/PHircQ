@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LanDiscoveryPanel } from "./LanDiscoveryPanel";
+import { deliverVerifiedExchange, readAgentoraPending, type BridgeInbox } from "../phircq/agentoraBridge";
+import { EXCHANGE_SCHEMA } from "../phircq/agentExchange";
 import { getPersistentPeerIdentity } from "../phircq/identityStore";
 import {
   PaperLinkEndpoint,
@@ -65,6 +67,16 @@ export function NetworkPanel({
   const [localFingerprint, setLocalFingerprint] = useState("");
   const [localPeerId, setLocalPeerId] = useState("");
   const [lanTarget, setLanTarget] = useState<LanPeer | null>(null);
+  // Session-only. Never persist operator-provided localhost credentials.
+  const [bridgeEnabled, setBridgeEnabled] = useState(false);
+  const [bridgeUrl, setBridgeUrl] = useState("http://127.0.0.1:38771");
+  const [bridgeToken, setBridgeToken] = useState("");
+  const [localAgentId, setLocalAgentId] = useState("agent:overstrings");
+  const [remoteAgentId, setRemoteAgentId] = useState("agent:btm");
+  const [exchangeSummary, setExchangeSummary] = useState("");
+  const [exchangeThread, setExchangeThread] = useState("btm-overstrings");
+  const [bridgeState, setBridgeState] = useState("OFF");
+  const [bridgePending, setBridgePending] = useState<BridgeInbox["messages"]>([]);
 
   async function persistentIdentity(): Promise<PeerIdentity> {
     if (identityRef.current) return identityRef.current;
@@ -453,12 +465,50 @@ export function NetworkPanel({
       return;
     }
 
+    const sessionBridge = bridgeEnabled
+      ? { baseUrl: bridgeUrl, token: bridgeToken }
+      : null;
+    const identityPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+    if (sessionBridge && (
+      !identityPattern.test(localAgentId) ||
+      !identityPattern.test(remoteAgentId) ||
+      localAgentId === remoteAgentId ||
+      !/^[a-f0-9]{64}$/.test(bridgeToken) ||
+      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(bridgeUrl)
+    )) {
+      onNotice("Agentora bridge configuration invalid. Disable it or enter trusted local IDs, port and token.");
+      return;
+    }
+
     setNetworkBusy(true);
 
     try {
       const session = await endpoint.connectSession({
         trusts: () => runtime.state.peers,
+        ...(sessionBridge ? {
+          agentExchange: {
+            localAgentId,
+            remoteAgentId,
+            remotePeerId: remotePeer.peerId,
+            // Exact peer and agent mapping already fixed for this session.
+            // This permission never includes tools, GitHub writes or context grants.
+            maySend: () => true,
+            mayReceive: () => true
+          }
+        } : {}),
         handlers: {
+          onAgentExchange(received) {
+            if (!sessionBridge) return;
+            void deliverVerifiedExchange(received, sessionBridge)
+              .then((result) => {
+                setBridgeState(result.state);
+                onNotice("Signed agent exchange: " + result.state + ". Review only.");
+              })
+              .catch((error) => {
+                setBridgeState("HELD");
+                onNotice(error instanceof Error ? error.message : "Agentora import was rejected.");
+              });
+          },
           onChat(message) {
             runtime.receivePeerChat(message);
             onRuntimeChange();
@@ -521,6 +571,7 @@ export function NetworkPanel({
 
       sessionRef.current = session;
       setLinkState("CONNECTED");
+      setBridgeState(sessionBridge ? "ACTIVE" : "OFF");
       onNotice(`Paper Link connected to ${remotePeer.displayName}.`);
     } catch (error) {
       setLinkState("ERROR");
@@ -531,6 +582,50 @@ export function NetworkPanel({
       );
     } finally {
       setNetworkBusy(false);
+    }
+  }
+
+  async function sendAgentOffer() {
+    const session = sessionRef.current;
+    if (!bridgeEnabled || !session || linkState !== "CONNECTED") {
+      onNotice("Enable the Agentora bridge and connect a trusted signed link first.");
+      return;
+    }
+    try {
+      const issued = new Date();
+      await session.sendAgentExchange({
+        schema: EXCHANGE_SCHEMA,
+        messageId: "exchange-" + crypto.randomUUID(),
+        threadId: exchangeThread,
+        sender: localAgentId,
+        recipient: remoteAgentId,
+        kind: "offer_work",
+        issuedAt: issued.toISOString(),
+        expiresAt: new Date(issued.getTime() + 10 * 60 * 1000).toISOString(),
+        summary: exchangeSummary.trim(),
+        authority: "advisory-only"
+      });
+      setExchangeSummary("");
+      onNotice("Advisory offer signed and sent to peer. Recipient inbox acceptance not yet confirmed.");
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : "Agent offer was denied.");
+    }
+  }
+
+  async function refreshBridgeInbox() {
+    if (!bridgeEnabled) {
+      onNotice("Enable the Agentora bridge in this local session first.");
+      return;
+    }
+    try {
+      const inbox = await readAgentoraPending(localAgentId, {
+        baseUrl: bridgeUrl, token: bridgeToken
+      });
+      setBridgePending(inbox.messages);
+      setBridgeState("INBOX_READY");
+    } catch (error) {
+      setBridgeState("HELD");
+      onNotice(error instanceof Error ? error.message : "Unable to read Agentora inbox.");
     }
   }
 
@@ -646,6 +741,10 @@ export function NetworkPanel({
       sessionRef.current = null;
       endpointRef.current = null;
       setLinkState("DISCONNECTED");
+      setBridgeToken("");
+      setBridgeEnabled(false);
+      setBridgePending([]);
+      setBridgeState("OFF");
       onNotice(
         "Paper Link disconnected. Start a new offer to re-link."
       );
@@ -673,6 +772,10 @@ export function NetworkPanel({
     setFileTransferStatus("");
     setFileTransferProgress(0);
     setLinkState("IDLE");
+    setBridgeToken("");
+    setBridgeEnabled(false);
+    setBridgePending([]);
+    setBridgeState("OFF");
   }
 
   return (
@@ -732,6 +835,75 @@ export function NetworkPanel({
         onNotice={onNotice}
         onLinkPeer={(peer) => void beginLanLink(peer)}
       />
+
+      <div className="pane-title">AGENTORA LOCAL BRIDGE (EXPLICIT OPT-IN)</div>
+      <p className="muted">
+        Advisory only. A signed remote agent message can reach Agentora's
+        token-protected localhost review inbox. Neither app may execute a
+        proposal or merge code from these messages.
+      </p>
+      <label>
+        <input
+          type="checkbox"
+          checked={bridgeEnabled}
+          disabled={linkState === "CONNECTED"}
+          onChange={(event) => setBridgeEnabled(event.target.checked)}
+        />
+        Enable agent handoff for next trusted Paper Link connection
+      </label>
+      <label>
+        Agentora localhost endpoint
+        <input value={bridgeUrl} disabled={linkState === "CONNECTED"}
+          onChange={(event) => setBridgeUrl(event.target.value)} />
+      </label>
+      <label>
+        Local agent ID
+        <input value={localAgentId} disabled={linkState === "CONNECTED"}
+          onChange={(event) => setLocalAgentId(event.target.value)} />
+      </label>
+      <label>
+        Trusted remote agent ID
+        <input value={remoteAgentId} disabled={linkState === "CONNECTED"}
+          onChange={(event) => setRemoteAgentId(event.target.value)} />
+      </label>
+      <label>
+        Operator bridge token (session only, never stored)
+        <input type="password" autoComplete="off" spellCheck={false}
+          value={bridgeToken}
+          onChange={(event) => setBridgeToken(event.target.value)} />
+      </label>
+      <div className="network-fact">
+        <span>handoff</span><strong>{bridgeState}</strong>
+      </div>
+      <button disabled={!bridgeEnabled || !bridgeToken}
+        onClick={() => void refreshBridgeInbox()}>
+        Read Agentora review inbox
+      </button>
+      {bridgePending.length > 0 && (
+        <div className="network-log" aria-label="Agentora pending reviews">
+          {bridgePending.map((item) => (
+            <div key={item.message_id}>
+              <strong>{item.kind}</strong> {item.sender} → {item.recipient}
+              <p>{item.summary}</p>
+              <small>REVIEW ONLY · {item.message_id}</small>
+            </div>
+          ))}
+        </div>
+      )}
+      <label>
+        Advisory offer thread
+        <input value={exchangeThread} onChange={(event) => setExchangeThread(event.target.value)} />
+      </label>
+      <label>
+        Advisory offer summary
+        <textarea rows={3} maxLength={2048} value={exchangeSummary}
+          onChange={(event) => setExchangeSummary(event.target.value)}
+          placeholder="Ask an authorized agent to inspect an issue. Never place secrets here." />
+      </label>
+      <button disabled={!bridgeEnabled || linkState !== "CONNECTED" ||
+        !exchangeSummary.trim()} onClick={() => void sendAgentOffer()}>
+        Send signed work offer (no execution)
+      </button>
 
       <div className="pane-title">PAPER LINK</div>
 
