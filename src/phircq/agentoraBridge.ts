@@ -46,6 +46,14 @@ const LOOPBACK_BASE = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function bridge(options: AgentoraBridgeOptions) {
+  // Never let a public/LAN-loaded PHircQ page solicit and forward local secrets.
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (!["localhost", "127.0.0.1", "tauri.localhost"].includes(host) &&
+        window.location.protocol !== "tauri:") {
+      throw new Error("Agentora bridge requires a trusted local PHircQ origin.");
+    }
+  }
   const url = options.baseUrl.replace(/\/$/, "");
   const match = LOOPBACK_BASE.exec(url);
   if (!match || Number(match[1]) > 65535 || !HEX_TOKEN.test(options.token)) {
