@@ -112,6 +112,8 @@ export interface PeerSessionHandlers {
     fingerprint: string;
     frameId: string;
     message: ExchangeMessage;
+    /** Original cryptographically verified peer frame. Preserve for portable attestation. */
+    signedFrame: SignedFrame<PeerFramePayload>;
   }) => void;
   onUntrustedPeer?: (request: {
     peerId: string;
@@ -448,7 +450,8 @@ export class PeerSession {
             return;
           }
           this.handlers.onAgentExchange({
-            peerId: frame.peerId, fingerprint, frameId: frame.id, message
+            peerId: frame.peerId, fingerprint, frameId: frame.id, message,
+            signedFrame: frame
           });
         } catch {
           this.handlers.onRejected?.("malformed or rejected agent exchange");
