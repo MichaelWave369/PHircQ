@@ -1,5 +1,5 @@
 import { createPeerIdentity, fingerprintPublicKey, type PeerIdentity } from "./peerCrypto";
-import { PeerSession, type PeerSessionHandlers } from "./peerSession";
+import { PeerSession, type PeerSessionHandlers, type AgentExchangeBinding } from "./peerSession";
 import type { PeerTrust } from "./types";
 import { WebRtcTransport } from "./transport";
 
@@ -274,6 +274,7 @@ export class PaperLinkEndpoint {
   async connectSession(options: {
     trusts: () => PeerTrust[];
     handlers?: PeerSessionHandlers;
+    agentExchange?: AgentExchangeBinding;
   }): Promise<PeerSession> {
     if (!this.remote) {
       throw new Error("Remote Paper Link identity is not known yet.");
@@ -292,7 +293,8 @@ export class PaperLinkEndpoint {
       identity: this.identity,
       transport,
       trusts: options.trusts,
-      handlers: options.handlers
+      handlers: options.handlers,
+      agentExchange: options.agentExchange
     });
 
     await this.session.connect();
