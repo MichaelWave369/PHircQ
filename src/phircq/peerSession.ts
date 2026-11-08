@@ -1,4 +1,5 @@
 import { sha256Hex } from "./attachments";
+import { readExchangeMessage, type ExchangeMessage } from "./agentExchange";
 import {
   createPeerIdentity,
   fingerprintPublicKey,
@@ -64,7 +65,21 @@ export interface FileReceiptPayload {
   detail: string;
 }
 
+export interface AgentExchangePayload {
+  kind: "agent.exchange";
+  message: ExchangeMessage;
+}
+
+export interface AgentExchangeBinding {
+  localAgentId: string;
+  remoteAgentId: string;
+  remotePeerId: string;
+  maySend: (message: ExchangeMessage) => boolean;
+  mayReceive: (message: ExchangeMessage) => boolean;
+}
+
 export type PeerFramePayload =
+  | AgentExchangePayload
   | ChatFramePayload
   | FileOfferPayload
   | FileAcceptPayload
@@ -92,6 +107,12 @@ export interface ReceivedPeerFile {
 }
 
 export interface PeerSessionHandlers {
+  onAgentExchange?: (received: {
+    peerId: string;
+    fingerprint: string;
+    frameId: string;
+    message: ExchangeMessage;
+  }) => void;
   onUntrustedPeer?: (request: {
     peerId: string;
     displayName: string;
@@ -178,7 +199,8 @@ export class PeerSession {
     readonly identity: PeerIdentity,
     private readonly transport: Transport,
     private readonly trusts: () => PeerTrust[],
-    private readonly handlers: PeerSessionHandlers
+    private readonly handlers: PeerSessionHandlers,
+    private readonly agentExchange?: AgentExchangeBinding
   ) {
     this.unsubscribe = transport.subscribe((event) => {
       if (event.type !== "peer.signed-frame") return;
@@ -192,12 +214,14 @@ export class PeerSession {
     transport: Transport;
     trusts: () => PeerTrust[];
     handlers?: PeerSessionHandlers;
+    agentExchange?: AgentExchangeBinding;
   }): Promise<PeerSession> {
     return new PeerSession(
       options.identity ?? (await createPeerIdentity(options.peerId)),
       options.transport,
       options.trusts,
-      options.handlers ?? {}
+      options.handlers ?? {},
+      options.agentExchange
     );
   }
 
@@ -223,6 +247,20 @@ export class PeerSession {
       displayName: input.displayName,
       text: input.text
     });
+  }
+
+  /** Operator-configured, signed advisory exchange: no implicit grants. */
+  async sendAgentExchange(raw: unknown): Promise<void> {
+    const binding = this.agentExchange;
+    if (!binding) throw new Error("Agent exchange disabled.");
+    const message = readExchangeMessage(raw);
+    if (message.sender !== binding.localAgentId ||
+        message.recipient !== binding.remoteAgentId ||
+        !this.trusts().some((entry) => entry.peerId === binding.remotePeerId)) {
+      throw new Error("Agent exchange route is not trusted.");
+    }
+    if (!binding.maySend(message)) throw new Error("Agent exchange policy denied outbound.");
+    await this.sendSigned({ kind: "agent.exchange", message });
   }
 
   async offerFile(input: {
@@ -394,6 +432,30 @@ export class PeerSession {
     }
 
     switch (frame.payload?.kind) {
+      case "agent.exchange": {
+        const binding = this.agentExchange;
+        if (!binding || frame.peerId !== binding.remotePeerId ||
+            !this.handlers.onAgentExchange) {
+          this.handlers.onRejected?.("agent exchange not enabled for trusted peer");
+          return;
+        }
+        try {
+          const message = readExchangeMessage(frame.payload.message);
+          if (message.sender !== binding.remoteAgentId ||
+              message.recipient !== binding.localAgentId ||
+              !binding.mayReceive(message)) {
+            this.handlers.onRejected?.("agent exchange identity or policy rejected");
+            return;
+          }
+          this.handlers.onAgentExchange({
+            peerId: frame.peerId, fingerprint, frameId: frame.id, message
+          });
+        } catch {
+          this.handlers.onRejected?.("malformed or rejected agent exchange");
+        }
+        return;
+      }
+
       case "chat.message":
         if (
           typeof frame.payload.roomName !== "string" ||
